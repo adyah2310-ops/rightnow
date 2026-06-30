@@ -1,0 +1,88 @@
+{
+  "entities": {
+    "Product": {
+      "title": "Product",
+      "description": "A retail garment product offered in the store",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique identifier of the product" },
+        "name": { "type": "string", "description": "Display name of the product" },
+        "brand": { "type": "string", "description": "Brand of the product" },
+        "category": { "type": "string", "description": "Main category of the garment" },
+        "subCategory": { "type": "string", "description": "Detailed sub-classification of the garment" },
+        "price": { "type": "number", "description": "Original price in INR" },
+        "offerPrice": { "type": "number", "description": "Special offered price in INR" },
+        "images": { "type": "array", "description": "List of product image URLs" },
+        "sizes": { "type": "array", "description": "List of available sizes" },
+        "colors": { "type": "array", "description": "List of available colors" },
+        "ratings": { "type": "number", "description": "Average user rating" },
+        "reviewCount": { "type": "number", "description": "Total number of reviews received" },
+        "description": { "type": "string", "description": "Detailed text description of the product" },
+        "specifications": { "type": "object", "description": "Technical specifications map" },
+        "stock": { "type": "number", "description": "Current inventory stock level" },
+        "isTrending": { "type": "boolean" },
+        "isBestSeller": { "type": "boolean" },
+        "isNewArrival": { "type": "boolean" },
+        "isTodayDeal": { "type": "boolean" },
+        "isSummerCollection": { "type": "boolean" },
+        "isFormalWear": { "type": "boolean" },
+        "isCasualWear": { "type": "boolean" },
+        "isFestivalCollection": { "type": "boolean" }
+      },
+      "required": ["id", "name", "brand", "category", "price", "offerPrice", "stock"]
+    },
+    "Coupon": {
+      "title": "Coupon",
+      "description": "A promotional discount code",
+      "type": "object",
+      "properties": {
+        "code": { "type": "string", "description": "Unique promotional code string" },
+        "discountType": { "type": "string", "enum": ["percentage", "fixed"], "description": "Percentage or fixed amount discount" },
+        "value": { "type": "number", "description": "Discount value (percentage rate or flat INR)" },
+        "minPurchase": { "type": "number", "description": "Minimum order total in INR to apply the coupon" },
+        "isActive": { "type": "boolean", "description": "Whether the coupon can currently be applied" },
+        "description": { "type": "string", "description": "Detailed explanation of the coupon deal" }
+      },
+      "required": ["code", "discountType", "value", "minPurchase", "isActive"]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "A placed order awaiting merchant verification",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Auto-generated order ID" },
+        "orderNumber": { "type": "string", "description": "Human-readable order sequence number" },
+        "customerId": { "type": "string", "description": "Customer identifier" },
+        "customerName": { "type": "string", "description": "Name of the ordering customer" },
+        "customerEmail": { "type": "string", "description": "Email of the ordering customer" },
+        "customerPhone": { "type": "string", "description": "Phone number of the ordering customer" },
+        "shippingAddress": { "type": "object", "description": "Shipping destination address details" },
+        "items": { "type": "array", "description": "List of ordered cart items" },
+        "totalAmount": { "type": "number", "description": "Final price paid in INR" },
+        "discountAmount": { "type": "number", "description": "Discount applied from any coupon in INR" },
+        "couponCode": { "type": "string" },
+        "paymentScreenshot": { "type": "string", "description": "Base64 or image URL reference of payment confirmation" },
+        "status": {
+          "type": "string",
+          "enum": ["Payment Verification Pending", "Confirmed", "Packed", "Shipped", "Delivered", "Cancelled"]
+        },
+        "createdAt": { "type": "string", "description": "Creation timestamp" }
+      },
+      "required": ["id", "orderNumber", "customerName", "customerEmail", "customerPhone", "shippingAddress", "items", "totalAmount", "status", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/products/{productId}": {
+      "schema": "Product",
+      "description": "Store garment products catalog"
+    },
+    "/coupons/{couponCode}": {
+      "schema": "Coupon",
+      "description": "Promotional discounts"
+    },
+    "/orders/{orderId}": {
+      "schema": "Order",
+      "description": "Customer purchase orders and payments"
+    }
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "name": "Rightnow Garments",
+  "description": "Premium, modern men's fashion e-commerce store for Rightnow Garments in Tiruchirappalli, Tamil Nadu.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,31 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Default deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Products Collection
+    match /products/{productId} {
+      // Anyone can read products to view the catalog.
+      // Anyone can write during initial database seeding, product addition/removal, or admin operations.
+      allow read, write: if true;
+    }
+
+    // Coupons Collection
+    match /coupons/{couponCode} {
+      // Anyone can read coupons.
+      // Anyone can write during initial database seeding or coupon management.
+      allow read, write: if true;
+    }
+
+    // Orders Collection
+    match /orders/{orderId} {
+      // Anyone can read orders as the app loads all orders on startup.
+      // Anyone can create or update orders during checkout.
+      allow read, write: if true;
+    }
+  }
+}
