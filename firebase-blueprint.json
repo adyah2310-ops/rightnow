@@ -69,6 +69,29 @@
         "createdAt": { "type": "string", "description": "Creation timestamp" }
       },
       "required": ["id", "orderNumber", "customerName", "customerEmail", "customerPhone", "shippingAddress", "items", "totalAmount", "status", "createdAt"]
+    },
+    "Category": {
+      "title": "Category",
+      "description": "A dynamic store product category",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "Dynamic display name of the category" },
+        "createdAt": { "type": "string", "description": "Creation timestamp" }
+      },
+      "required": ["name"]
+    },
+    "DeliverySettings": {
+      "title": "DeliverySettings",
+      "description": "Global logistic and delivery fee parameters",
+      "type": "object",
+      "properties": {
+        "expressEnabled": { "type": "boolean" },
+        "expressCharge": { "type": "number" },
+        "normalCharge": { "type": "number" },
+        "freeDeliveryThreshold": { "type": "number" },
+        "eligibleLocations": { "type": "array" }
+      },
+      "required": ["expressEnabled", "expressCharge", "normalCharge", "freeDeliveryThreshold", "eligibleLocations"]
     }
   },
   "firestore": {
@@ -83,6 +106,14 @@
     "/orders/{orderId}": {
       "schema": "Order",
       "description": "Customer purchase orders and payments"
+    },
+    "/categories/{categoryId}": {
+      "schema": "Category",
+      "description": "Store garment categories"
+    },
+    "/settings/{settingId}": {
+      "schema": "DeliverySettings",
+      "description": "Store logistics and app configurations"
     }
   }
 }

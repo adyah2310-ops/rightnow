@@ -1,12 +1,12 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { 
   ShoppingBag, Heart, User, Search, MapPin, Phone, MessageSquare, 
-  ChevronRight, Sparkles, Star, ShieldCheck, HelpCircle, Sun, Moon, 
+  ChevronLeft, ChevronRight, Sparkles, Star, ShieldCheck, HelpCircle, Sun, Moon, 
   Menu, X, MapPinOff, ArrowRight, CheckCircle2, Clock, Mail, 
   ThumbsUp, Tag, Plus, Settings, BarChart2, Home, Store, Trash2 
 } from 'lucide-react';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
-import { collection, getDocs } from 'firebase/firestore';
+import { collection, getDocs, doc, getDoc, setDoc, writeBatch } from 'firebase/firestore';
 
 import { db, auth } from './firebase';
 import { seedDatabase } from './seed';
@@ -31,6 +31,14 @@ export default function App() {
   const [products, setProducts] = useState<Product[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const [coupons, setCoupons] = useState<Coupon[]>([]);
+  const [categories, setCategories] = useState<string[]>([]);
+  const [deliverySettings, setDeliverySettings] = useState({
+    expressEnabled: true,
+    expressCharge: 150,
+    normalCharge: 40,
+    freeDeliveryThreshold: 499,
+    eligibleLocations: ['Tiruchirappalli', 'Tennur', 'Srirangam', 'Cantonment', 'Thillai Nagar', 'Trichy', 'Kattur']
+  });
   const [loading, setLoading] = useState(true);
 
   // Authentication State
@@ -53,6 +61,16 @@ export default function App() {
   const [cart, setCart] = useState<CartItem[]>([]);
   const [wishlist, setWishlist] = useState<Product[]>([]);
   const [recentlyViewed, setRecentlyViewed] = useState<Product[]>([]);
+
+  // Category carousels scroll refs and handlers
+  const categoryScrollRefs = useRef<{ [key: string]: HTMLDivElement | null }>({});
+  const handleScroll = (cat: string, direction: 'left' | 'right') => {
+    const el = categoryScrollRefs.current[cat];
+    if (el) {
+      const amt = direction === 'left' ? -350 : 350;
+      el.scrollBy({ left: amt, behavior: 'smooth' });
+    }
+  };
 
   // Active overlays / Modals
   const [activeQuickViewProduct, setActiveQuickViewProduct] = useState<Product | null>(null);
@@ -96,6 +114,49 @@ export default function App() {
         cList.push(doc.data() as Coupon);
       });
       setCoupons(cList);
+
+      // Load categories
+      const catSnap = await getDocs(collection(db, 'categories'));
+      let catList: string[] = [];
+      catSnap.forEach(doc => {
+        const data = doc.data();
+        if (data.name) catList.push(data.name);
+      });
+      if (catList.length === 0) {
+        // Seed default categories
+        const defaultCats = ['Shirts', 'Pants', 'Jeans', 'T-Shirts', 'Trousers', 'Jackets', 'Accessories', 'Combos', 'Tracks'];
+        const batch = writeBatch(db);
+        for (const catName of defaultCats) {
+          const docRef = doc(db, 'categories', catName.toLowerCase());
+          batch.set(docRef, { name: catName, createdAt: new Date().toISOString() });
+        }
+        await batch.commit();
+        catList = defaultCats;
+      }
+      setCategories(catList);
+
+      // Load delivery settings
+      const sDoc = await getDoc(doc(db, 'settings', 'delivery'));
+      if (sDoc.exists()) {
+        const sData = sDoc.data();
+        setDeliverySettings({
+          expressEnabled: sData.expressEnabled ?? true,
+          expressCharge: Number(sData.expressCharge ?? 150),
+          normalCharge: Number(sData.normalCharge ?? 40),
+          freeDeliveryThreshold: Number(sData.freeDeliveryThreshold ?? 499),
+          eligibleLocations: sData.eligibleLocations ?? ['Tiruchirappalli', 'Tennur', 'Srirangam', 'Cantonment', 'Thillai Nagar', 'Trichy', 'Kattur']
+        });
+      } else {
+        const defaultSettings = {
+          expressEnabled: true,
+          expressCharge: 150,
+          normalCharge: 40,
+          freeDeliveryThreshold: 499,
+          eligibleLocations: ['Tiruchirappalli', 'Tennur', 'Srirangam', 'Cantonment', 'Thillai Nagar', 'Trichy', 'Kattur']
+        };
+        await setDoc(doc(db, 'settings', 'delivery'), defaultSettings);
+        setDeliverySettings(defaultSettings);
+      }
 
       // Load orders
       const oSnap = await getDocs(collection(db, 'orders'));
@@ -281,7 +342,21 @@ export default function App() {
   };
 
   // Filter matrices calculations
-  const categoriesList = ['All', 'Shirts', 'Pants', 'Jeans', 'T-Shirts', 'Trousers', 'Jackets', 'Accessories'];
+  const rawUniqueCategories = Array.from(new Set([
+    'Shirts', 'Pants', 'Jeans', 'T-Shirts', 'Trousers', 'Jackets', 'Accessories', 'Combos', 'Tracks',
+    ...categories,
+    ...products.map(p => p.category).filter(Boolean)
+  ]));
+  const uniqueCategories: string[] = [];
+  const seenLower = new Set<string>();
+  for (const cat of rawUniqueCategories) {
+    const lower = cat.toLowerCase();
+    if (!seenLower.has(lower)) {
+      seenLower.add(lower);
+      uniqueCategories.push(cat);
+    }
+  }
+  const categoriesList = ['All', ...uniqueCategories];
   const brandsList = ['All', 'Rightnow Garments'];
   const sizesList = ['All', 'S', 'M', 'L', 'XL', 'XXL', '30', '32', '34', '36'];
   const colorsList = ['All', 'Off-White', 'Soft Blue', 'Sage Green', 'Black', 'White', 'Navy/Crimson', 'Charcoal Grey', 'Tan Suede', 'Vintage Tan'];
@@ -384,49 +459,28 @@ export default function App() {
           </div>
 
           {/* CENTRAL NAV LIST (Desktop) */}
-          <nav id="desktop-navbar" className="hidden md:flex items-center gap-5 text-[11px] font-black uppercase tracking-widest text-neutral-700 dark:text-neutral-300">
+          <nav id="desktop-navbar" className="hidden md:flex items-center gap-5 text-[11px] font-black uppercase tracking-widest text-neutral-700 dark:text-neutral-300 overflow-x-auto scrollbar-none max-w-[50vw] flex-nowrap shrink-0">
             <button 
               onClick={() => { setShowAdminView(false); setActiveTab('HOME'); }} 
-              className={`transition-colors py-2 border-b-2 ${activeTab === 'HOME' ? 'text-orange-500 border-orange-500' : 'border-transparent hover:text-orange-500'}`}
+              className={`transition-colors py-2 border-b-2 shrink-0 ${activeTab === 'HOME' ? 'text-orange-500 border-orange-500' : 'border-transparent hover:text-orange-500'}`}
             >
               Home
             </button>
             <button 
               onClick={() => { setShowAdminView(false); setActiveTab('SHOP'); setSelectedCategory('All'); }} 
-              className={`transition-colors py-2 border-b-2 ${activeTab === 'SHOP' && selectedCategory === 'All' ? 'text-orange-500 border-orange-500' : 'border-transparent hover:text-orange-500'}`}
+              className={`transition-colors py-2 border-b-2 shrink-0 ${activeTab === 'SHOP' && selectedCategory === 'All' ? 'text-orange-500 border-orange-500' : 'border-transparent hover:text-orange-500'}`}
             >
               Shop
             </button>
-            <button 
-              onClick={() => { setShowAdminView(false); setActiveTab('SHOP'); setSelectedCategory('Shirts'); }} 
-              className={`transition-colors py-2 border-b-2 ${activeTab === 'SHOP' && selectedCategory === 'Shirts' ? 'text-orange-500 border-orange-500' : 'border-transparent hover:text-orange-500'}`}
-            >
-              Shirts
-            </button>
-            <button 
-              onClick={() => { setShowAdminView(false); setActiveTab('SHOP'); setSelectedCategory('T-Shirts'); }} 
-              className={`transition-colors py-2 border-b-2 ${activeTab === 'SHOP' && selectedCategory === 'T-Shirts' ? 'text-orange-500 border-orange-500' : 'border-transparent hover:text-orange-500'}`}
-            >
-              T-Shirts
-            </button>
-            <button 
-              onClick={() => { setShowAdminView(false); setActiveTab('SHOP'); setSelectedCategory('Jeans'); }} 
-              className={`transition-colors py-2 border-b-2 ${activeTab === 'SHOP' && selectedCategory === 'Jeans' ? 'text-orange-500 border-orange-500' : 'border-transparent hover:text-orange-500'}`}
-            >
-              Jeans
-            </button>
-            <button 
-              onClick={() => { setShowAdminView(false); setActiveTab('SHOP'); setSelectedCategory('Trousers'); }} 
-              className={`transition-colors py-2 border-b-2 ${activeTab === 'SHOP' && selectedCategory === 'Trousers' ? 'text-orange-500 border-orange-500' : 'border-transparent hover:text-orange-500'}`}
-            >
-              Trousers
-            </button>
-            <button 
-              onClick={() => { setShowAdminView(false); setActiveTab('SHOP'); setSelectedCategory('Accessories'); }} 
-              className={`transition-colors py-2 border-b-2 ${activeTab === 'SHOP' && selectedCategory === 'Accessories' ? 'text-orange-500 border-orange-500' : 'border-transparent hover:text-orange-500'}`}
-            >
-              Accessories
-            </button>
+            {uniqueCategories.map((cat) => (
+              <button 
+                key={cat}
+                onClick={() => { setShowAdminView(false); setActiveTab('SHOP'); setSelectedCategory(cat); setSelectedSubCategory('All'); }} 
+                className={`transition-colors py-2 border-b-2 shrink-0 ${activeTab === 'SHOP' && selectedCategory === cat ? 'text-orange-500 border-orange-500' : 'border-transparent hover:text-orange-500'}`}
+              >
+                {cat}
+              </button>
+            ))}
           </nav>
 
           {/* RIGHT CTA UTILITY BOX */}
@@ -530,15 +584,19 @@ export default function App() {
 
         {/* MOBILE MENU PANEL */}
         {mobileMenuOpen && (
-          <div id="mobile-menu-drawer" className="md:hidden border-t border-neutral-100 dark:border-neutral-900 p-4 space-y-4 bg-white dark:bg-neutral-950 text-left">
+          <div id="mobile-menu-drawer" className="md:hidden border-t border-neutral-100 dark:border-neutral-900 p-4 bg-white dark:bg-neutral-950 text-left max-h-[80vh] overflow-y-auto shadow-lg">
             <div className="flex flex-col gap-3 font-bold text-sm text-neutral-800 dark:text-neutral-200">
               <button onClick={() => { setShowAdminView(false); setActiveTab('HOME'); setMobileMenuOpen(false); }} className="hover:text-orange-500 text-left py-1">Home</button>
               <button onClick={() => { setShowAdminView(false); setActiveTab('SHOP'); setSelectedCategory('All'); setMobileMenuOpen(false); }} className="hover:text-orange-500 text-left py-1">All Collections</button>
-              <button onClick={() => { setShowAdminView(false); setActiveTab('SHOP'); setSelectedCategory('Shirts'); setMobileMenuOpen(false); }} className="hover:text-orange-500 text-left py-1">Shirts</button>
-              <button onClick={() => { setShowAdminView(false); setActiveTab('SHOP'); setSelectedCategory('T-Shirts'); setMobileMenuOpen(false); }} className="hover:text-orange-500 text-left py-1">T-Shirts</button>
-              <button onClick={() => { setShowAdminView(false); setActiveTab('SHOP'); setSelectedCategory('Jeans'); setMobileMenuOpen(false); }} className="hover:text-orange-500 text-left py-1">Jeans</button>
-              <button onClick={() => { setShowAdminView(false); setActiveTab('SHOP'); setSelectedCategory('Trousers'); setMobileMenuOpen(false); }} className="hover:text-orange-500 text-left py-1">Trousers</button>
-              <button onClick={() => { setShowAdminView(false); setActiveTab('SHOP'); setSelectedCategory('Accessories'); setMobileMenuOpen(false); }} className="hover:text-orange-500 text-left py-1">Accessories</button>
+              {uniqueCategories.map((cat) => (
+                <button 
+                  key={cat} 
+                  onClick={() => { setShowAdminView(false); setActiveTab('SHOP'); setSelectedCategory(cat); setSelectedSubCategory('All'); setMobileMenuOpen(false); }} 
+                  className="hover:text-orange-500 text-left py-1"
+                >
+                  {cat}
+                </button>
+              ))}
             </div>
           </div>
         )}
@@ -559,6 +617,8 @@ export default function App() {
             allOrders={orders}
             allCoupons={coupons}
             onRefreshData={loadDatabaseRecords}
+            categories={categories}
+            deliverySettings={deliverySettings}
           />
         ) : (
           // RENDER CUSTOMER STOREFRONT WITH DYNAMIC TABS
@@ -651,77 +711,78 @@ export default function App() {
                   </div>
                 </section>
 
-                {/* ARCHED CARDS (2x2 GRID - ALIGNS WITH SCREENSHOTS REFERENCE) */}
-                <section className="max-w-7xl mx-auto px-4 md:px-8 text-center space-y-8">
+                {/* ARCHED CARDS (SEASONAL CURATION) */}
+                <section className="max-w-7xl mx-auto px-4 md:px-8 text-center space-y-8 pt-8">
                   <div className="space-y-2">
-                    <span className="text-[10px] font-black uppercase tracking-widest text-orange-500">
+                    <span className="text-[10px] font-black uppercase tracking-widest text-orange-500 block">
                       Seasonal Curation
                     </span>
-                    <h3 className="text-3xl md:text-4xl font-serif-display text-neutral-950 dark:text-white">
+                    <h3 className="text-xl sm:text-2xl font-black uppercase tracking-tight text-neutral-950 dark:text-white">
                       Shop by Category Edits
                     </h3>
-                    <p className="text-xs text-neutral-400 max-w-md mx-auto">
+                    <p className="text-xs text-neutral-400 max-w-lg mx-auto">
                       Explore our precision-crafted menswear categories, built with custom premium blends for exceptional fit.
                     </p>
                   </div>
 
-                  {/* 2x2 Arched Grid */}
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-6 max-w-5xl mx-auto">
+                  {/* 1x4 Arched Grid */}
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-8 max-w-6xl mx-auto">
                     {[
                       {
-                        title: "Premium Linen",
+                        title: "PREMIUM LINEN",
                         category: "Shirts",
                         image: "https://images.unsplash.com/photo-1596755094514-f87e34085b2c?w=600&auto=format&fit=crop&q=80",
-                        tagline: "Breezy Spread Collar"
+                        tagline: "BREEZY SPREAD COLLAR"
                       },
                       {
-                        title: "Street Oversized",
+                        title: "STREET OVERSIZED",
                         category: "T-Shirts",
                         image: "https://images.unsplash.com/photo-1521572267360-ee0c2909d518?w=600&auto=format&fit=crop&q=80",
-                        tagline: "240 GSM Heavy Knit"
+                        tagline: "240 GSM HEAVY KNIT"
                       },
                       {
-                        title: "Selvedge Raw",
+                        title: "SELVEDGE RAW",
                         category: "Jeans",
                         image: "https://images.unsplash.com/photo-1542272604-787c3835535d?w=600&auto=format&fit=crop&q=80",
-                        tagline: "Traditional Shuttle Loom"
+                        tagline: "TRADITIONAL SHUTTLE LOOM"
                       },
                       {
-                        title: "Tailored Smart",
+                        title: "TAILORED SMART",
                         category: "Trousers",
                         image: "https://images.unsplash.com/photo-1624378439575-d8705ad7ae80?w=600&auto=format&fit=crop&q=80",
-                        tagline: "Modern Pleated Comfort"
+                        tagline: "MODERN PLEATED COMFORT"
                       }
                     ].map((card, idx) => (
                       <div
                         key={idx}
                         onClick={() => {
                           setSelectedCategory(card.category);
+                          setSelectedSubCategory('All');
                           setActiveTab('SHOP');
                           window.scrollTo({ top: 0, behavior: 'smooth' });
                         }}
                         className="group cursor-pointer space-y-3"
                       >
                         {/* Arched image container */}
-                        <div className="arch-card-clip aspect-[3/4] overflow-hidden bg-neutral-100 border border-neutral-100 dark:border-neutral-900 shadow-xs group-hover:shadow-lg transition-all duration-300 relative">
+                        <div className="arch-card-clip aspect-[3/4] overflow-hidden bg-neutral-100 border border-neutral-900/10 dark:border-white/10 shadow-sm group-hover:shadow-md transition-all duration-300 relative">
                           <img
                             src={card.image}
                             alt={card.title}
                             className="w-full h-full object-cover object-center group-hover:scale-105 transition-transform duration-500"
                           />
-                          <div className="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                            <span className="bg-white text-neutral-950 font-black text-[10px] uppercase tracking-wider px-3 py-1.5 rounded-full shadow-md flex items-center gap-1.5">
+                          <div className="absolute inset-0 bg-black/10 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                            <span className="bg-white text-neutral-950 font-black text-[9px] uppercase tracking-widest px-3 py-1.5 rounded-full shadow-md flex items-center gap-1">
                               View Catalog <ArrowRight className="w-3 h-3" />
                             </span>
                           </div>
                         </div>
 
                         {/* Description */}
-                        <div className="text-center">
-                          <span className="text-[9px] uppercase font-black text-orange-500 tracking-wider">
+                        <div className="text-center space-y-0.5">
+                          <div className="text-[9px] uppercase font-black text-orange-500 tracking-wider">
                             {card.tagline}
-                          </span>
-                          <h4 className="font-bold text-sm text-neutral-900 dark:text-neutral-100 uppercase tracking-tight group-hover:text-orange-500 transition-colors">
+                          </div>
+                          <h4 className="font-black text-xs text-neutral-400 dark:text-neutral-500 uppercase tracking-widest group-hover:text-orange-500 transition-colors">
                             {card.title}
                           </h4>
                         </div>
@@ -729,6 +790,93 @@ export default function App() {
                     ))}
                   </div>
                 </section>
+
+                {/* HOMEPAGE PRODUCT SHOWCASE */}
+                {(() => {
+                  return (
+                    <section className="max-w-7xl mx-auto px-4 md:px-8 space-y-16">
+                      {uniqueCategories.map((cat) => {
+                        const categoryProducts = products.filter(
+                          (p) => p.category.toLowerCase() === cat.toLowerCase()
+                        );
+                        if (categoryProducts.length === 0) return null;
+
+                        return (
+                          <div key={cat} className="space-y-4 text-left relative group/carousel">
+                            <div className="flex justify-between items-end border-b border-neutral-100 dark:border-neutral-850 pb-3">
+                              <div>
+                                <span className="text-[10px] font-black uppercase tracking-widest text-orange-500">
+                                  Curated Wardrobe
+                                </span>
+                                <h3 className="text-xl sm:text-2xl font-black text-neutral-950 dark:text-white uppercase tracking-tight mt-0.5">
+                                  {cat} Collection
+                                </h3>
+                                <p className="text-xs text-neutral-400">
+                                  Discover precision-crafted {cat.toLowerCase()} with premium drapes and bespoke fits.
+                                </p>
+                              </div>
+                              
+                              <div className="flex items-center gap-3">
+                                <button
+                                  onClick={() => {
+                                    setSelectedCategory(cat);
+                                    setSelectedSubCategory('All');
+                                    setActiveTab('SHOP');
+                                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                                  }}
+                                  className="text-xs font-black text-orange-500 hover:text-orange-600 uppercase tracking-wider flex items-center gap-1 transition-all"
+                                >
+                                  View All ({categoryProducts.length}) <ArrowRight className="w-3.5 h-3.5" />
+                                </button>
+                                
+                                {/* Navigation Arrows */}
+                                <div className="hidden md:flex gap-1.5 ml-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleScroll(cat, 'left')}
+                                    className="p-1.5 rounded-lg border border-neutral-200 dark:border-neutral-800 hover:bg-neutral-100 dark:hover:bg-neutral-850 text-neutral-700 dark:text-neutral-300 transition-colors"
+                                  >
+                                    <ChevronLeft className="w-4 h-4" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleScroll(cat, 'right')}
+                                    className="p-1.5 rounded-lg border border-neutral-200 dark:border-neutral-800 hover:bg-neutral-100 dark:hover:bg-neutral-850 text-neutral-700 dark:text-neutral-300 transition-colors"
+                                  >
+                                    <ChevronRight className="w-4 h-4" />
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Carousel Wrapper */}
+                            <div className="relative">
+                              <div
+                                ref={(el) => {
+                                  categoryScrollRefs.current[cat] = el;
+                                }}
+                                className="flex overflow-x-auto scrollbar-none gap-6 pb-4 snap-x snap-mandatory scroll-smooth"
+                              >
+                                {categoryProducts.map((p) => (
+                                  <div key={p.id} className="w-[200px] sm:w-[250px] shrink-0 snap-start">
+                                    <ProductCard
+                                      product={p}
+                                      onQuickView={handleOpenPDP}
+                                      onAddToCart={handleAddToCart}
+                                      onBuyNow={handleBuyNow}
+                                      onToggleWishlist={handleToggleWishlist}
+                                      isWishlisted={wishlist.some((item) => item.id === p.id)}
+                                    />
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </section>
+                  );
+                })()}
 
 
                 {/* 3.3 WHY CHOOSE US */}
@@ -881,197 +1029,215 @@ export default function App() {
 
             {/* TAB 2: SHOP CATALOG */}
             {activeTab === 'SHOP' && (
-              <div className="space-y-8 animate-fadeIn max-w-7xl mx-auto px-4 md:px-8 mt-6">
-                
-                {/* Category Circle Buttons */}
-                <div className="flex gap-3 overflow-x-auto py-2 scrollbar-none justify-start md:justify-center shrink-0">
-                  {categoriesList.map((cat) => (
-                    <button
-                      key={cat}
-                      onClick={() => { setSelectedCategory(cat); setSelectedSubCategory('All'); }}
-                      className={`px-5 py-2.5 rounded-full font-black text-xs uppercase tracking-wider border-2 transition-all shrink-0 ${
-                        selectedCategory === cat
-                          ? 'border-neutral-950 dark:border-white bg-neutral-950 dark:bg-white text-white dark:text-neutral-950 shadow-md scale-[1.02]'
-                          : 'border-neutral-100 dark:border-neutral-900 bg-neutral-50 dark:bg-neutral-900 text-neutral-600 dark:text-neutral-400 hover:border-neutral-300'
-                      }`}
-                    >
-                      {cat}
-                    </button>
-                  ))}
-                </div>
-
-                {/* Full Width Elegant Top Filters Bar */}
-                <div className="bg-neutral-50 dark:bg-neutral-900/40 p-5 rounded-[24px] border border-neutral-200/50 dark:border-neutral-800/50 space-y-4 shadow-sm">
-                  {/* Row 1: Search & Reset */}
-                  <div className="flex flex-col md:flex-row gap-4 justify-between items-stretch md:items-center">
-                    <div className="relative flex-1">
-                      <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-neutral-400">
-                        <Search className="w-4 h-4" />
-                      </span>
-                      <input
-                        type="text"
-                        placeholder="Search premium garments, styles, materials..."
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        className="w-full pl-10 pr-4 py-3 border border-neutral-200 dark:border-neutral-800 rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-neutral-950 bg-white dark:bg-neutral-950 text-neutral-900 dark:text-white font-medium"
-                      />
-                    </div>
-                    
-                    {/* Active Filters Summary & Reset */}
-                    <div className="flex items-center justify-between md:justify-end gap-4">
-                      <span className="text-xs text-neutral-500">
-                        Found <strong className="text-neutral-800 dark:text-neutral-200 font-extrabold">{filteredCatalog.length}</strong> premium styles
-                      </span>
-                      {(selectedCategory !== 'All' || selectedBrand !== 'All' || selectedSize !== 'All' || selectedOccasion !== 'All' || searchQuery !== '' || priceRange < 5000) && (
-                        <button
-                          onClick={() => {
-                            setSelectedCategory('All');
-                            setSelectedSubCategory('All');
-                            setSelectedBrand('All');
-                            setSelectedSize('All');
-                            setSelectedOccasion('All');
-                            setPriceRange(5000);
-                            setSortOption('Popularity');
-                            setSearchQuery('');
-                          }}
-                          className="text-xs font-black text-orange-500 hover:text-orange-400 transition-colors uppercase tracking-wider flex items-center gap-1.5"
-                        >
-                          <X className="w-3.5 h-3.5" />
-                          Reset Filters
-                        </button>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Row 2: Selector Menus */}
-                  <div className="flex flex-wrap items-center gap-3 pt-3 border-t border-neutral-200/50 dark:border-neutral-800/50">
-                    
-                    {/* Size Selector */}
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-[10px] font-black uppercase text-neutral-400 tracking-wider">Size:</span>
-                      <select
-                        value={selectedSize}
-                        onChange={(e) => setSelectedSize(e.target.value)}
-                        className="p-2 border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 text-xs rounded-lg text-neutral-800 dark:text-neutral-200 focus:outline-none focus:ring-1 focus:ring-orange-500 font-bold"
-                      >
-                        {sizesList.map(size => (
-                          <option key={size} value={size}>{size === 'All' ? 'All Sizes' : `Size: ${size}`}</option>
+              <div className="animate-fadeIn max-w-7xl mx-auto px-4 md:px-8 mt-6">
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+                  
+                  {/* LEFT COLUMN: Sticky Category Navigation (3 cols) */}
+                  <aside className="lg:col-span-3 lg:sticky lg:top-24 space-y-4 shrink-0 z-10">
+                    <div className="bg-neutral-50 dark:bg-neutral-900 border border-neutral-100 dark:border-neutral-850 p-5 rounded-3xl shadow-xs space-y-4">
+                      <div className="text-left">
+                        <h3 className="text-xs font-black uppercase text-orange-500 tracking-wider">Collections</h3>
+                        <p className="text-[10px] text-neutral-400">Select premium wardrobe edits</p>
+                      </div>
+                      
+                      <div className="flex lg:flex-col gap-2 overflow-x-auto lg:overflow-y-auto lg:max-h-[60vh] py-1 lg:py-0 scrollbar-none">
+                        {categoriesList.map((cat) => (
+                          <button
+                            key={cat}
+                            onClick={() => { setSelectedCategory(cat); setSelectedSubCategory('All'); }}
+                            className={`px-4 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider border-2 transition-all shrink-0 text-left flex justify-between items-center ${
+                              selectedCategory === cat
+                                ? 'border-neutral-950 dark:border-white bg-neutral-950 dark:bg-white text-white dark:text-neutral-950 shadow-sm'
+                                : 'border-neutral-50 dark:border-neutral-900 bg-neutral-50/50 dark:bg-neutral-900/50 text-neutral-600 dark:text-neutral-400 hover:border-neutral-200 hover:bg-neutral-100/10'
+                            }`}
+                          >
+                            <span>{cat}</span>
+                            <span className="text-[9px] opacity-65 font-mono ml-2 shrink-0">
+                              ({cat === 'All' ? products.length : products.filter(p => p.category === cat).length})
+                            </span>
+                          </button>
                         ))}
-                      </select>
+                      </div>
                     </div>
+                  </aside>
 
-                    {/* Brand Selector */}
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-[10px] font-black uppercase text-neutral-400 tracking-wider">Brand:</span>
-                      <select
-                        value={selectedBrand}
-                        onChange={(e) => setSelectedBrand(e.target.value)}
-                        className="p-2 border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 text-xs rounded-lg text-neutral-800 dark:text-neutral-200 focus:outline-none focus:ring-1 focus:ring-orange-500 font-bold"
-                      >
-                        <option value="All">All Brands</option>
-                        {brandsList.filter(b => b !== 'All').map(b => (
-                          <option key={b} value={b}>{b}</option>
-                        ))}
-                      </select>
-                    </div>
-
-                    {/* Occasion Selector */}
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-[10px] font-black uppercase text-neutral-400 tracking-wider">Occasion:</span>
-                      <select
-                        value={selectedOccasion}
-                        onChange={(e) => setSelectedOccasion(e.target.value)}
-                        className="p-2 border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 text-xs rounded-lg text-neutral-800 dark:text-neutral-200 focus:outline-none focus:ring-1 focus:ring-orange-500 font-bold"
-                      >
-                        <option value="All">All Occasions</option>
-                        <option value="Casual">Casual</option>
-                        <option value="Formal">Formal</option>
-                        <option value="Festival">Festival</option>
-                      </select>
-                    </div>
-
-                    {/* Price Range Slider */}
-                    <div className="flex items-center gap-2 bg-white dark:bg-neutral-950 px-3.5 py-2 border border-neutral-200 dark:border-neutral-800 rounded-lg">
-                      <span className="text-[10px] font-black uppercase text-neutral-400 tracking-wider">Max Price:</span>
-                      <input
-                        type="range"
-                        min="500"
-                        max="5000"
-                        step="100"
-                        value={priceRange}
-                        onChange={(e) => setPriceRange(Number(e.target.value))}
-                        className="w-20 sm:w-28 h-1 bg-neutral-200 dark:bg-neutral-800 rounded-lg appearance-none cursor-pointer accent-orange-500"
-                      />
-                      <span className="text-xs font-black text-neutral-800 dark:text-neutral-200">₹{priceRange}</span>
-                    </div>
-
-                    {/* Sort Selector */}
-                    <div className="flex items-center gap-1.5 ml-auto">
-                      <span className="text-[10px] font-black uppercase text-neutral-400 tracking-wider">Sort By:</span>
-                      <select
-                        value={sortOption}
-                        onChange={(e) => setSortOption(e.target.value)}
-                        className="p-2 border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 text-xs rounded-lg text-neutral-800 dark:text-neutral-200 focus:outline-none focus:ring-1 focus:ring-orange-500 font-bold"
-                      >
-                        <option value="Popularity">Most Popular</option>
-                        <option value="Newest">Newest Arrivals</option>
-                        <option value="PriceLowHigh">Price: Low to High</option>
-                        <option value="PriceHighLow">Price: High to Low</option>
-                      </select>
-                    </div>
-
-                  </div>
-                </div>
-
-                {/* Product Catalog Grid - Full Width Spanning */}
-                {filteredCatalog.length === 0 ? (
-                  <div id="no-results-catalog" className="text-center py-20 bg-neutral-50 dark:bg-neutral-900 rounded-[24px] border border-neutral-100 dark:border-neutral-850 space-y-3">
-                    <p className="font-extrabold text-neutral-700 dark:text-neutral-300">No premium garments match your filter matrix</p>
-                    <p className="text-xs text-neutral-400">Try loosening your price sliders or selecting "All" categories.</p>
-                  </div>
-                ) : (
-                  <div id="product-grid" className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-6">
-                    {filteredCatalog.map((product) => (
-                      <ProductCard
-                        key={product.id}
-                        product={product}
-                        onQuickView={handleOpenPDP}
-                        onAddToCart={handleAddToCart}
-                        onBuyNow={handleBuyNow}
-                        onToggleWishlist={handleToggleWishlist}
-                        isWishlisted={wishlist.some(p => p.id === product.id)}
-                      />
-                    ))}
-                  </div>
-                )}
-
-                {/* 3.5 RECENTLY VIEWED PRODUCTS */}
-                {recentlyViewed.length > 0 && (
-                  <section id="recently-viewed" className="text-left space-y-4 pt-6 border-t border-neutral-100 dark:border-neutral-900">
-                    <div>
-                      <h3 className="text-sm font-black text-neutral-950 dark:text-white uppercase tracking-wider">Recently Inspected Styles</h3>
-                      <p className="text-xs text-neutral-400">Don't miss out on your favorite garments</p>
-                    </div>
-
-                    <div className="flex gap-4 overflow-x-auto pb-2 scrollbar-none">
-                      {recentlyViewed.map((p) => (
-                        <div
-                          key={p.id}
-                          onClick={() => handleOpenPDP(p)}
-                          className="group cursor-pointer p-3 bg-neutral-50 dark:bg-neutral-900 rounded-2xl border border-neutral-100 dark:border-neutral-900 hover:border-neutral-200 w-44 shrink-0 transition-all flex items-center gap-3 animate-fadeIn"
-                        >
-                          <img src={p.images[0]} alt={p.name} className="w-10 h-13 object-cover rounded-lg shrink-0" />
-                          <div className="min-w-0 text-left">
-                            <h4 className="text-[11px] font-bold text-neutral-850 dark:text-neutral-200 line-clamp-1 group-hover:text-orange-500 transition-colors">
-                              {p.name}
-                            </h4>
-                            <p className="text-[10px] font-black text-neutral-950 dark:text-white mt-1">₹{p.offerPrice}</p>
-                          </div>
+                  {/* RIGHT COLUMN: Filters and Products (9 cols) */}
+                  <div className="lg:col-span-9 space-y-8 text-left">
+                    {/* Elegant Top Filters Bar */}
+                    <div className="bg-neutral-50 dark:bg-neutral-900/40 p-5 rounded-[24px] border border-neutral-200/50 dark:border-neutral-800/50 space-y-4 shadow-sm">
+                      {/* Row 1: Search & Reset */}
+                      <div className="flex flex-col md:flex-row gap-4 justify-between items-stretch md:items-center">
+                        <div className="relative flex-1">
+                          <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-neutral-400">
+                            <Search className="w-4 h-4" />
+                          </span>
+                          <input
+                            type="text"
+                            placeholder="Search premium garments, styles, materials..."
+                            value={searchQuery}
+                            onChange={(e) => setSearchQuery(e.target.value)}
+                            className="w-full pl-10 pr-4 py-3 border border-neutral-200 dark:border-neutral-800 rounded-xl text-xs focus:outline-none focus:ring-1 focus:ring-neutral-950 bg-white dark:bg-neutral-950 text-neutral-900 dark:text-white font-medium"
+                          />
                         </div>
-                      ))}
+                        
+                        {/* Active Filters Summary & Reset */}
+                        <div className="flex items-center justify-between md:justify-end gap-4">
+                          <span className="text-xs text-neutral-500">
+                            Found <strong className="text-neutral-800 dark:text-neutral-200 font-extrabold">{filteredCatalog.length}</strong> premium styles
+                          </span>
+                          {(selectedCategory !== 'All' || selectedBrand !== 'All' || selectedSize !== 'All' || selectedOccasion !== 'All' || searchQuery !== '' || priceRange < 5000) && (
+                            <button
+                              onClick={() => {
+                                setSelectedCategory('All');
+                                setSelectedSubCategory('All');
+                                setSelectedBrand('All');
+                                setSelectedSize('All');
+                                setSelectedOccasion('All');
+                                setPriceRange(5000);
+                                setSortOption('Popularity');
+                                setSearchQuery('');
+                              }}
+                              className="text-xs font-black text-orange-500 hover:text-orange-400 transition-colors uppercase tracking-wider flex items-center gap-1.5"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                              Reset Filters
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Row 2: Selector Menus */}
+                      <div className="flex flex-wrap items-center gap-3 pt-3 border-t border-neutral-200/50 dark:border-neutral-800/50">
+                        
+                        {/* Size Selector */}
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[10px] font-black uppercase text-neutral-400 tracking-wider">Size:</span>
+                          <select
+                            value={selectedSize}
+                            onChange={(e) => setSelectedSize(e.target.value)}
+                            className="p-2 border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 text-xs rounded-lg text-neutral-800 dark:text-neutral-200 focus:outline-none focus:ring-1 focus:ring-orange-500 font-bold"
+                          >
+                            {sizesList.map(size => (
+                              <option key={size} value={size}>{size === 'All' ? 'All Sizes' : `Size: ${size}`}</option>
+                            ))}
+                          </select>
+                        </div>
+
+                        {/* Brand Selector */}
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[10px] font-black uppercase text-neutral-400 tracking-wider">Brand:</span>
+                          <select
+                            value={selectedBrand}
+                            onChange={(e) => setSelectedBrand(e.target.value)}
+                            className="p-2 border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 text-xs rounded-lg text-neutral-800 dark:text-neutral-200 focus:outline-none focus:ring-1 focus:ring-orange-500 font-bold"
+                          >
+                            <option value="All">All Brands</option>
+                            {brandsList.filter(b => b !== 'All').map(b => (
+                              <option key={b} value={b}>{b}</option>
+                            ))}
+                          </select>
+                        </div>
+
+                        {/* Occasion Selector */}
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[10px] font-black uppercase text-neutral-400 tracking-wider">Occasion:</span>
+                          <select
+                            value={selectedOccasion}
+                            onChange={(e) => setSelectedOccasion(e.target.value)}
+                            className="p-2 border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 text-xs rounded-lg text-neutral-800 dark:text-neutral-200 focus:outline-none focus:ring-1 focus:ring-orange-500 font-bold"
+                          >
+                            <option value="All">All Occasions</option>
+                            <option value="Casual">Casual</option>
+                            <option value="Formal">Formal</option>
+                            <option value="Festival">Festival</option>
+                          </select>
+                        </div>
+
+                        {/* Price Range Slider */}
+                        <div className="flex items-center gap-2 bg-white dark:bg-neutral-950 px-3.5 py-2 border border-neutral-200 dark:border-neutral-800 rounded-lg">
+                          <span className="text-[10px] font-black uppercase text-neutral-400 tracking-wider">Max Price:</span>
+                          <input
+                            type="range"
+                            min="500"
+                            max="5000"
+                            step="100"
+                            value={priceRange}
+                            onChange={(e) => setPriceRange(Number(e.target.value))}
+                            className="w-20 sm:w-28 h-1 bg-neutral-200 dark:bg-neutral-800 rounded-lg appearance-none cursor-pointer accent-orange-500"
+                          />
+                          <span className="text-xs font-black text-neutral-800 dark:text-neutral-200">₹{priceRange}</span>
+                        </div>
+
+                        {/* Sort Selector */}
+                        <div className="flex items-center gap-1.5 ml-auto">
+                          <span className="text-[10px] font-black uppercase text-neutral-400 tracking-wider">Sort By:</span>
+                          <select
+                            value={sortOption}
+                            onChange={(e) => setSortOption(e.target.value)}
+                            className="p-2 border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 text-xs rounded-lg text-neutral-800 dark:text-neutral-200 focus:outline-none focus:ring-1 focus:ring-orange-500 font-bold"
+                          >
+                            <option value="Popularity">Most Popular</option>
+                            <option value="Newest">Newest Arrivals</option>
+                            <option value="PriceLowHigh">Price: Low to High</option>
+                            <option value="PriceHighLow">Price: High to Low</option>
+                          </select>
+                        </div>
+
+                      </div>
                     </div>
-                  </section>
-                )}
+
+                    {/* Product Catalog Grid */}
+                    {filteredCatalog.length === 0 ? (
+                      <div id="no-results-catalog" className="text-center py-20 bg-neutral-50 dark:bg-neutral-900 rounded-[24px] border border-neutral-100 dark:border-neutral-850 space-y-3">
+                        <p className="font-extrabold text-neutral-700 dark:text-neutral-300">No premium garments match your filter matrix</p>
+                        <p className="text-xs text-neutral-400">Try loosening your price sliders or selecting "All" categories.</p>
+                      </div>
+                    ) : (
+                      <div id="product-grid" className="grid grid-cols-2 sm:grid-cols-3 gap-6">
+                        {filteredCatalog.map((product) => (
+                          <ProductCard
+                            key={product.id}
+                            product={product}
+                            onQuickView={handleOpenPDP}
+                            onAddToCart={handleAddToCart}
+                            onBuyNow={handleBuyNow}
+                            onToggleWishlist={handleToggleWishlist}
+                            isWishlisted={wishlist.some(p => p.id === product.id)}
+                          />
+                        ))}
+                      </div>
+                    )}
+
+                    {/* 3.5 RECENTLY VIEWED PRODUCTS */}
+                    {recentlyViewed.length > 0 && (
+                      <section id="recently-viewed" className="text-left space-y-4 pt-6 border-t border-neutral-100 dark:border-neutral-900">
+                        <div>
+                          <h3 className="text-sm font-black text-neutral-950 dark:text-white uppercase tracking-wider">Recently Inspected Styles</h3>
+                          <p className="text-xs text-neutral-400">Don't miss out on your favorite garments</p>
+                        </div>
+
+                        <div className="flex gap-4 overflow-x-auto pb-2 scrollbar-none">
+                          {recentlyViewed.map((p) => (
+                            <div
+                              key={p.id}
+                              onClick={() => handleOpenPDP(p)}
+                              className="group cursor-pointer p-3 bg-neutral-50 dark:bg-neutral-900 rounded-2xl border border-neutral-100 dark:border-neutral-900 hover:border-neutral-200 w-44 shrink-0 transition-all flex items-center gap-3 animate-fadeIn"
+                            >
+                              <img src={p.images[0]} alt={p.name} className="w-10 h-13 object-cover rounded-lg shrink-0" />
+                              <div className="min-w-0 text-left">
+                                <h4 className="text-[11px] font-bold text-neutral-850 dark:text-neutral-200 line-clamp-1 group-hover:text-orange-500 transition-colors">
+                                  {p.name}
+                                </h4>
+                                <p className="text-[10px] font-black text-neutral-950 dark:text-white mt-1">₹{p.offerPrice}</p>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </section>
+                    )}
+                  </div>
+
+                </div>
               </div>
             )}
 
@@ -1632,6 +1798,7 @@ export default function App() {
         userEmail={user?.email || ''}
         onOrderSuccess={handleOrderSuccess}
         onClearCart={() => setCart([])}
+        deliverySettings={deliverySettings}
       />
 
       {/* PDP Modal */}
@@ -1643,6 +1810,7 @@ export default function App() {
         onBuyNow={handleBuyNow}
         onToggleWishlist={handleToggleWishlist}
         isWishlisted={activeQuickViewProduct ? wishlist.some(p => p.id === activeQuickViewProduct.id) : false}
+        wishlist={wishlist}
         allProducts={products}
         onSelectProduct={handleOpenPDP}
       />

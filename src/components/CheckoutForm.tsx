@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
-import { X, ArrowLeft, ShieldCheck, QrCode, UploadCloud, CheckCircle, Sparkles, AlertCircle, Loader2 } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { X, ArrowLeft, ShieldCheck, QrCode, UploadCloud, CheckCircle, Sparkles, AlertCircle, Loader2, Clock } from 'lucide-react';
 import { CartItem, Coupon, Order } from '../types';
-import { collection, addDoc, updateDoc, doc } from 'firebase/firestore';
+import { collection, addDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 
 interface CheckoutFormProps {
@@ -13,6 +13,13 @@ interface CheckoutFormProps {
   userEmail: string;
   onOrderSuccess: (order: Order) => void;
   onClearCart: () => void;
+  deliverySettings?: {
+    expressEnabled: boolean;
+    expressCharge: number;
+    normalCharge: number;
+    freeDeliveryThreshold: number;
+    eligibleLocations: string[];
+  };
 }
 
 export default function CheckoutForm({
@@ -24,6 +31,7 @@ export default function CheckoutForm({
   userEmail,
   onOrderSuccess,
   onClearCart,
+  deliverySettings,
 }: CheckoutFormProps) {
   // Form states
   const [fullName, setFullName] = useState('');
@@ -35,6 +43,9 @@ export default function CheckoutForm({
   const [pinCode, setPinCode] = useState('');
   const [notes, setNotes] = useState('');
   
+  // Delivery speed selection state
+  const [deliveryMode, setDeliveryMode] = useState<'NORMAL' | 'EXPRESS'>('NORMAL');
+
   // Screenshot upload state
   const [screenshotBase64, setScreenshotBase64] = useState('');
   const [uploadError, setUploadError] = useState('');
@@ -43,8 +54,45 @@ export default function CheckoutForm({
 
   if (!isOpen) return null;
 
+  // Active delivery config (either passed as prop or falling back to safe local defaults)
+  const config = deliverySettings || {
+    expressEnabled: true,
+    expressCharge: 150,
+    normalCharge: 40,
+    freeDeliveryThreshold: 499,
+    eligibleLocations: ['Tiruchirappalli', 'Tennur', 'Srirangam', 'Cantonment', 'Thillai Nagar', 'Trichy', 'Kattur']
+  };
+
+  const isExpressEligible = config.eligibleLocations.some(
+    loc => city.toLowerCase().includes(loc.toLowerCase()) || address.toLowerCase().includes(loc.toLowerCase())
+  );
+
+  // Revert back to NORMAL if location eligibility becomes false
+  useEffect(() => {
+    if (!isExpressEligible && deliveryMode === 'EXPRESS') {
+      setDeliveryMode('NORMAL');
+    }
+  }, [isExpressEligible]);
+
   const subtotal = cartItems.reduce((acc, item) => acc + item.product.offerPrice * item.quantity, 0);
-  const totalAmount = Math.max(0, subtotal - discountAmount);
+  
+  // Determine Delivery Charge
+  let deliveryCharge = 0;
+  if (deliveryMode === 'EXPRESS') {
+    deliveryCharge = config.expressCharge;
+  } else {
+    deliveryCharge = subtotal >= config.freeDeliveryThreshold ? 0 : config.normalCharge;
+  }
+
+  const totalAmount = Math.max(0, subtotal - discountAmount + deliveryCharge);
+
+  // Helper to format Est. Normal delivery date
+  const getEstimatedNormalDate = () => {
+    const options: Intl.DateTimeFormatOptions = { month: 'short', day: 'numeric', weekday: 'short' };
+    const estDate = new Date();
+    estDate.setDate(estDate.getDate() + 3);
+    return estDate.toLocaleDateString('en-IN', options);
+  };
 
   // Generate unique order reference number
   const orderNumber = `RN-${Math.floor(100000 + Math.random() * 900000)}`;
@@ -116,6 +164,8 @@ export default function CheckoutForm({
         totalAmount,
         discountAmount,
         couponCode: appliedCoupon?.code || '',
+        deliveryMethod: deliveryMode === 'EXPRESS' ? 'Express Delivery' : 'Normal Delivery',
+        deliveryCharge,
         paymentScreenshot: screenshotBase64,
         status: 'Payment Verification Pending',
         createdAt: new Date().toISOString(),
@@ -289,6 +339,81 @@ export default function CheckoutForm({
               </div>
             </div>
 
+            {/* Delivery Method Selection */}
+            <div className="space-y-3 pt-2">
+              <label className="block text-[10px] font-black uppercase text-neutral-400 tracking-widest">
+                Choose Delivery Speed
+              </label>
+              
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {/* Normal Delivery Card */}
+                <div 
+                  onClick={() => setDeliveryMode('NORMAL')}
+                  className={`p-4 rounded-xl border-2 cursor-pointer transition-all flex flex-col justify-between space-y-2 text-left ${
+                    deliveryMode === 'NORMAL'
+                      ? 'border-neutral-950 dark:border-white bg-neutral-50 dark:bg-neutral-950/40'
+                      : 'border-neutral-100 dark:border-neutral-800 bg-transparent hover:border-neutral-200'
+                  }`}
+                >
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs font-black uppercase tracking-tight">Normal Delivery</span>
+                    <span className="text-xs font-black text-neutral-900 dark:text-white">
+                      {subtotal >= config.freeDeliveryThreshold ? 'FREE' : `₹${config.normalCharge}`}
+                    </span>
+                  </div>
+                  <div className="space-y-0.5">
+                    <p className="text-[10px] text-neutral-400">Arrives in 3–4 Days</p>
+                    <p className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400">
+                      Est. Delivery: {getEstimatedNormalDate()}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Express Delivery Card */}
+                <div 
+                  onClick={() => {
+                    if (config.expressEnabled && isExpressEligible) {
+                      setDeliveryMode('EXPRESS');
+                    }
+                  }}
+                  className={`p-4 rounded-xl border-2 transition-all flex flex-col justify-between space-y-2 text-left relative ${
+                    !config.expressEnabled || !isExpressEligible
+                      ? 'opacity-45 cursor-not-allowed border-neutral-100 dark:border-neutral-800 bg-neutral-100/10'
+                      : deliveryMode === 'EXPRESS'
+                        ? 'border-neutral-950 dark:border-white bg-neutral-50 dark:bg-neutral-950/40 cursor-pointer'
+                        : 'border-neutral-100 dark:border-neutral-800 bg-transparent hover:border-neutral-200 cursor-pointer'
+                  }`}
+                >
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs font-black uppercase tracking-tight flex items-center gap-1">
+                      <Clock className="w-3.5 h-3.5 text-orange-500 animate-pulse shrink-0" />
+                      Express Delivery
+                    </span>
+                    <span className="text-xs font-black text-orange-500">₹{config.expressCharge}</span>
+                  </div>
+                  <div className="space-y-0.5">
+                    <p className="text-[10px] text-neutral-400">Delivery Within Minutes (Local)</p>
+                    {config.expressEnabled && isExpressEligible ? (
+                      <p className="text-[10px] font-bold text-orange-500">
+                        Est. Time: 35–45 Mins
+                      </p>
+                    ) : !config.expressEnabled ? (
+                      <p className="text-[9px] font-bold text-red-500 uppercase tracking-tight">Temporarily Disabled</p>
+                    ) : (
+                      <p className="text-[9px] text-red-500 font-bold uppercase tracking-tight">Not eligible for address</p>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Ineligibility tip */}
+              {config.expressEnabled && !isExpressEligible && (
+                <p className="text-[9px] text-neutral-400 leading-tight">
+                  ℹ️ Express delivery is only available for local orders in: <span className="font-bold text-neutral-500">{config.eligibleLocations.join(', ')}</span>. Modify your City or Address to qualify.
+                </p>
+              )}
+            </div>
+
             {/* Selected items receipt preview */}
             <div className="bg-neutral-50 dark:bg-neutral-950/40 p-4 rounded-xl border border-neutral-100 dark:border-neutral-850">
               <span className="text-[10px] font-black uppercase text-neutral-400 block mb-2">Itemized Invoice Receipt</span>
@@ -304,16 +429,28 @@ export default function CheckoutForm({
                   </div>
                 ))}
               </div>
-              <div className="border-t border-neutral-200 dark:border-neutral-800 mt-2.5 pt-2.5 space-y-1 text-xs">
+              <div className="border-t border-neutral-200 dark:border-neutral-800 mt-2.5 pt-2.5 space-y-1.5 text-xs text-neutral-600 dark:text-neutral-450">
+                <div className="flex justify-between">
+                  <span>Cart Items Subtotal</span>
+                  <span className="font-extrabold text-neutral-800 dark:text-neutral-200">₹{subtotal.toLocaleString('en-IN')}</span>
+                </div>
                 {appliedCoupon && (
                   <div className="flex justify-between text-emerald-600 dark:text-emerald-400">
                     <span>Coupon ({appliedCoupon.code})</span>
                     <span className="font-bold">-₹{discountAmount}</span>
                   </div>
                 )}
-                <div className="flex justify-between font-black text-sm text-neutral-900 dark:text-white">
+                <div className="flex justify-between">
+                  <span>
+                    Delivery Fee ({deliveryMode === 'EXPRESS' ? 'Express Speed' : 'Normal Speed'})
+                  </span>
+                  <span className="font-bold text-neutral-800 dark:text-neutral-200">
+                    {deliveryCharge === 0 ? 'FREE' : `₹${deliveryCharge}`}
+                  </span>
+                </div>
+                <div className="flex justify-between font-black text-sm text-neutral-900 dark:text-white pt-1.5 border-t border-neutral-100 dark:border-neutral-850">
                   <span>Grand Total</span>
-                  <span>₹{totalAmount.toLocaleString('en-IN')}</span>
+                  <span className="text-orange-500">₹{totalAmount.toLocaleString('en-IN')}</span>
                 </div>
               </div>
             </div>

@@ -27,5 +27,19 @@ service cloud.firestore {
       // Anyone can create or update orders during checkout.
       allow read, write: if true;
     }
+
+    // Categories Collection
+    match /categories/{categoryId} {
+      // Anyone can read categories to view collections in menus/navbars.
+      // Anyone can write to seed, create, update, or delete categories.
+      allow read, write: if true;
+    }
+
+    // Settings Collection
+    match /settings/{settingId} {
+      // Anyone can read settings for delivery and logistics charges.
+      // Anyone can write settings to update or seed them.
+      allow read, write: if true;
+    }
   }
 }

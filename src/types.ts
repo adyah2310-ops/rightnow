@@ -68,6 +68,8 @@ export interface Order {
   totalAmount: number;
   discountAmount: number;
   couponCode?: string;
+  deliveryMethod?: string;
+  deliveryCharge?: number;
   paymentScreenshot: string; // Base64 or URL
   status: 'Payment Verification Pending' | 'Confirmed' | 'Packed' | 'Shipped' | 'Delivered' | 'Cancelled';
   createdAt: string;

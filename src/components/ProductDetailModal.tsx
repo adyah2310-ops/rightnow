@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { X, Heart, Star, ShoppingBag, MessageSquare, Share2, Check, HelpCircle, ChevronLeft, ChevronRight, MessageCircle } from 'lucide-react';
 import { Product } from '../types';
+import ProductCard from './ProductCard';
 
 interface ProductDetailModalProps {
   product: Product | null;
@@ -10,6 +11,7 @@ interface ProductDetailModalProps {
   onBuyNow: (product: Product, size: string, color: string, quantity: number) => void;
   onToggleWishlist: (product: Product) => void;
   isWishlisted: boolean;
+  wishlist: Product[];
   allProducts: Product[];
   onSelectProduct: (product: Product) => void;
 }
@@ -22,6 +24,7 @@ export default function ProductDetailModal({
   onBuyNow,
   onToggleWishlist,
   isWishlisted,
+  wishlist,
   allProducts,
   onSelectProduct
 }: ProductDetailModalProps) {
@@ -33,6 +36,18 @@ export default function ProductDetailModal({
   const [showSizeChart, setShowSizeChart] = useState(false);
   const [zoomStyle, setZoomStyle] = useState<React.CSSProperties>({});
   const [isHovered, setIsHovered] = useState(false);
+
+  // Carousel scroll refs
+  const relatedScrollRef = useRef<HTMLDivElement>(null);
+  const exploreScrollRef = useRef<HTMLDivElement>(null);
+  const trendingScrollRef = useRef<HTMLDivElement>(null);
+
+  const handleCarouselScroll = (ref: React.RefObject<HTMLDivElement | null>, direction: 'left' | 'right') => {
+    if (ref.current) {
+      const amt = direction === 'left' ? -320 : 320;
+      ref.current.scrollBy({ left: amt, behavior: 'smooth' });
+    }
+  };
 
   // New review state
   const [newRating, setNewRating] = useState(5);
@@ -54,10 +69,42 @@ export default function ProductDetailModal({
 
   const discount = Math.round(((product.price - product.offerPrice) / product.price) * 100);
 
-  // Filter related products
-  const related = allProducts
-    .filter(p => p.category === product.category && p.id !== product.id)
-    .slice(0, 3);
+  // --- Smart Recommendation Logic ---
+  const otherProducts = allProducts.filter(p => p.id !== product.id);
+
+  // Priority 1: Products from same category
+  const sameCategoryProducts = otherProducts.filter(p => p.category === product.category);
+  const sortedRelated = [...sameCategoryProducts].sort((a, b) => {
+    const scoreA = (a.isBestSeller ? 4 : 0) + (a.isNewArrival ? 3 : 0) + (a.isTrending ? 2 : 0);
+    const scoreB = (b.isBestSeller ? 4 : 0) + (b.isNewArrival ? 3 : 0) + (b.isTrending ? 2 : 0);
+    return scoreB - scoreA;
+  });
+
+  // Priority 2: Products from other categories (Explore More Collections)
+  const otherCategoryProducts = otherProducts.filter(p => p.category !== product.category);
+  const sortedExplore = [...otherCategoryProducts].sort((a, b) => {
+    const scoreA = (a.isBestSeller ? 4 : 0) + (a.isNewArrival ? 3 : 0) + (a.isTrending ? 2 : 0);
+    const scoreB = (b.isBestSeller ? 4 : 0) + (b.isNewArrival ? 3 : 0) + (b.isTrending ? 2 : 0);
+    return scoreB - scoreA;
+  });
+
+  // Priority 3: Trending / Best Seller products
+  const trendingProducts = otherProducts.filter(p => p.isTrending || p.isBestSeller || p.ratings >= 4.5);
+  const sortedTrending = [...trendingProducts].sort((a, b) => b.ratings - a.ratings);
+
+  const handleProductSelect = (p: Product) => {
+    onSelectProduct(p);
+    setActiveImageIndex(0);
+    setSelectedSize(p.sizes[0] || '');
+    setSelectedColor(p.colors[0] || '');
+    setQuantity(1);
+    
+    // Smooth scroll the modal container back to the top
+    const modalContent = document.getElementById('pdp-modal-content');
+    if (modalContent) {
+      modalContent.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  };
 
   // Handle Image Zoom on Mouse Move
   const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -498,40 +545,100 @@ export default function ProductDetailModal({
 
           </div>
 
-          {/* SECTION: Related Products Slider */}
-          {related.length > 0 && (
-            <div className="pt-8 border-t border-neutral-100 dark:border-neutral-800 space-y-4">
-              <div>
-                <h3 className="text-sm font-black text-neutral-950 dark:text-white uppercase tracking-wider">Related Style Pairings</h3>
-                <p className="text-xs text-neutral-400">Specially recommended by Rightnow fashion designers</p>
-              </div>
+          {/* SECTIONS: Smart Product Recommendations */}
+          {renderRecommendationSection(
+            "You May Also Like",
+            "Related Products in the same category pairing",
+            sortedRelated.slice(0, 8),
+            relatedScrollRef
+          )}
 
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-                {related.map((p) => (
-                  <div
-                    key={p.id}
-                    onClick={() => {
-                      onSelectProduct(p);
-                      setActiveImageIndex(0);
-                    }}
-                    className="group cursor-pointer p-3.5 bg-neutral-50 hover:bg-white dark:bg-neutral-950 dark:hover:bg-neutral-900 rounded-xl border border-neutral-100 dark:border-neutral-850 hover:border-neutral-200 dark:hover:border-neutral-700 transition-all flex items-center gap-3.5"
-                  >
-                    <img src={p.images[0]} alt={p.name} className="w-14 h-18 object-cover rounded-lg shrink-0" />
-                    <div>
-                      <h4 className="text-xs font-bold text-neutral-800 dark:text-neutral-200 line-clamp-1 group-hover:text-orange-500 transition-colors">
-                        {p.name}
-                      </h4>
-                      <p className="text-[10px] text-neutral-400 font-extrabold uppercase mt-0.5">{p.brand}</p>
-                      <p className="text-xs font-black text-neutral-950 dark:text-white mt-1">₹{p.offerPrice}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
+          {renderRecommendationSection(
+            "Explore More Collections",
+            "Broaden your style with items from other premium categories",
+            sortedExplore.slice(0, 8),
+            exploreScrollRef
+          )}
+
+          {renderRecommendationSection(
+            "Trending Products",
+            "Best-selling customer favorites from Tiruchirappalli",
+            sortedTrending.slice(0, 8),
+            trendingScrollRef
           )}
 
         </div>
       </div>
     </div>
   );
+
+  // Helper to render horizontally scrollable recommendation carousels with desktop navigation buttons
+  function renderRecommendationSection(
+    title: string,
+    subtitle: string,
+    productsList: Product[],
+    scrollRef: React.RefObject<HTMLDivElement | null>
+  ) {
+    if (productsList.length === 0) return null;
+
+    const handleCarouselScroll = (direction: 'left' | 'right') => {
+      if (scrollRef.current) {
+        const amt = direction === 'left' ? -320 : 320;
+        scrollRef.current.scrollBy({ left: amt, behavior: 'smooth' });
+      }
+    };
+
+    return (
+      <div className="pt-8 border-t border-neutral-100 dark:border-neutral-800 space-y-4 relative group/carousel">
+        <div className="flex justify-between items-end">
+          <div>
+            <h3 className="text-sm font-black text-neutral-950 dark:text-white uppercase tracking-wider">{title}</h3>
+            <p className="text-[11px] text-neutral-400">{subtitle}</p>
+          </div>
+          <div className="hidden md:flex gap-1.5">
+            <button
+              type="button"
+              onClick={() => handleCarouselScroll('left')}
+              className="p-1.5 rounded-lg border border-neutral-200 dark:border-neutral-800 hover:bg-neutral-100 dark:hover:bg-neutral-850 text-neutral-700 dark:text-neutral-300 transition-colors"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => handleCarouselScroll('right')}
+              className="p-1.5 rounded-lg border border-neutral-200 dark:border-neutral-800 hover:bg-neutral-100 dark:hover:bg-neutral-850 text-neutral-700 dark:text-neutral-300 transition-colors"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+
+        <div
+          ref={scrollRef}
+          className="flex overflow-x-auto scrollbar-none gap-4 pb-4 snap-x snap-mandatory scroll-smooth"
+        >
+          {productsList.map((p) => (
+            <div key={p.id} className="w-[180px] sm:w-[220px] shrink-0 snap-start">
+              <ProductCard
+                product={p}
+                onAddToCart={(prod, sz, col) => {
+                  const finalSize = sz || prod.sizes[0] || 'M';
+                  const finalColor = col || prod.colors[0] || 'Black';
+                  onAddToCart(prod, finalSize, finalColor, 1);
+                }}
+                onBuyNow={(prod, sz, col) => {
+                  const finalSize = sz || prod.sizes[0] || 'M';
+                  const finalColor = col || prod.colors[0] || 'Black';
+                  onBuyNow(prod, finalSize, finalColor, 1);
+                }}
+                onQuickView={() => handleProductSelect(p)}
+                onToggleWishlist={onToggleWishlist}
+                isWishlisted={wishlist.some((item) => item.id === p.id)}
+              />
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
 }

@@ -1,11 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc } from 'firebase/firestore';
+import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, setDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { Product, Order, Coupon } from '../types';
 import { 
   BarChart, Layers, Inbox, Percent, AlertTriangle, Plus, Edit2, Trash2, 
   Check, X, Eye, FileText, TrendingUp, ShoppingCart, Users, CheckCircle, 
-  Truck, PackageCheck, AlertCircle, ShoppingBag, XCircle, Search, RefreshCw 
+  Truck, PackageCheck, AlertCircle, ShoppingBag, XCircle, Search, RefreshCw, Settings
 } from 'lucide-react';
 
 interface AdminPanelProps {
@@ -13,16 +13,26 @@ interface AdminPanelProps {
   allOrders: Order[];
   allCoupons: Coupon[];
   onRefreshData: () => void;
+  categories: string[];
+  deliverySettings: {
+    expressEnabled: boolean;
+    expressCharge: number;
+    normalCharge: number;
+    freeDeliveryThreshold: number;
+    eligibleLocations: string[];
+  };
 }
 
 export default function AdminPanel({
   allProducts,
   allOrders,
   allCoupons,
-  onRefreshData
+  onRefreshData,
+  categories,
+  deliverySettings
 }: AdminPanelProps) {
   // Navigation tabs
-  const [activeTab, setActiveTab] = useState<'analytics' | 'products' | 'orders' | 'coupons'>('analytics');
+  const [activeTab, setActiveTab] = useState<'analytics' | 'products' | 'orders' | 'coupons' | 'categories' | 'logistics'>('analytics');
   
   // Search state
   const [searchTerm, setSearchTerm] = useState('');
@@ -64,6 +74,28 @@ export default function AdminPanel({
   const [couponValue, setCouponValue] = useState(10);
   const [couponMinPurchase, setCouponMinPurchase] = useState(1000);
   const [couponDesc, setCouponDesc] = useState('');
+
+  // Category management form states
+  const [categoryNameInput, setCategoryNameInput] = useState('');
+  const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null);
+
+  // Delivery / Logistics form states
+  const [logisticsExpressEnabled, setLogisticsExpressEnabled] = useState(false);
+  const [logisticsExpressCharge, setLogisticsExpressCharge] = useState(0);
+  const [logisticsNormalCharge, setLogisticsNormalCharge] = useState(0);
+  const [logisticsFreeThreshold, setLogisticsFreeThreshold] = useState(0);
+  const [logisticsLocationsInput, setLogisticsLocationsInput] = useState('');
+
+  // Sync settings when props change
+  useEffect(() => {
+    if (deliverySettings) {
+      setLogisticsExpressEnabled(deliverySettings.expressEnabled ?? false);
+      setLogisticsExpressCharge(deliverySettings.expressCharge ?? 0);
+      setLogisticsNormalCharge(deliverySettings.normalCharge ?? 0);
+      setLogisticsFreeThreshold(deliverySettings.freeDeliveryThreshold ?? 0);
+      setLogisticsLocationsInput((deliverySettings.eligibleLocations ?? []).join(', '));
+    }
+  }, [deliverySettings]);
 
   // Submitting status
   const [submitting, setSubmitting] = useState(false);
@@ -282,6 +314,73 @@ export default function AdminPanel({
     }
   };
 
+  // Category CRUD operations
+  const handleSaveCategory = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!categoryNameInput.trim()) return;
+    setSubmitting(true);
+    try {
+      const catId = editingCategoryId || categoryNameInput.trim().toLowerCase();
+      await setDoc(doc(db, 'categories', catId), {
+        name: categoryNameInput.trim(),
+        createdAt: new Date().toISOString()
+      });
+      triggerAlert('success', `Category "${categoryNameInput}" saved successfully!`);
+      setCategoryNameInput('');
+      setEditingCategoryId(null);
+      onRefreshData();
+    } catch (err) {
+      console.error(err);
+      triggerAlert('error', 'Failed to save category');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleDeleteCategory = async (catName: string) => {
+    if (!window.confirm(`Are you sure you want to delete category "${catName}"? All products in this category will remain, but the category navigation will change.`)) return;
+    setSubmitting(true);
+    try {
+      const catId = catName.toLowerCase();
+      await deleteDoc(doc(db, 'categories', catId));
+      triggerAlert('success', `Category "${catName}" deleted successfully!`);
+      onRefreshData();
+    } catch (err) {
+      console.error(err);
+      triggerAlert('error', 'Failed to delete category');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // Logistics & Delivery settings operations
+  const handleSaveLogistics = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSubmitting(true);
+    try {
+      const locations = logisticsLocationsInput
+        .split(',')
+        .map(loc => loc.trim())
+        .filter(loc => loc !== '');
+
+      await setDoc(doc(db, 'settings', 'delivery'), {
+        expressEnabled: logisticsExpressEnabled,
+        expressCharge: Number(logisticsExpressCharge),
+        normalCharge: Number(logisticsNormalCharge),
+        freeDeliveryThreshold: Number(logisticsFreeThreshold),
+        eligibleLocations: locations
+      });
+
+      triggerAlert('success', 'Logistics & delivery configurations updated successfully!');
+      onRefreshData();
+    } catch (err) {
+      console.error(err);
+      triggerAlert('error', 'Failed to update logistics configurations');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   // KPI Calculations
   const totalSales = allOrders
     .filter(o => o.status !== 'Cancelled' && o.status !== 'Payment Verification Pending')
@@ -397,6 +496,28 @@ export default function AdminPanel({
           >
             <Percent className="w-4 h-4" />
             Coupons System
+          </button>
+          <button
+            onClick={() => setActiveTab('categories')}
+            className={`py-4 px-6 font-black text-xs uppercase tracking-wider border-b-2 transition-all flex items-center gap-2 whitespace-nowrap ${
+              activeTab === 'categories' 
+                ? 'border-orange-500 text-orange-600' 
+                : 'border-transparent text-neutral-500 hover:text-neutral-900'
+            }`}
+          >
+            <Layers className="w-4 h-4" />
+            Categories Manager ({categories.length})
+          </button>
+          <button
+            onClick={() => setActiveTab('logistics')}
+            className={`py-4 px-6 font-black text-xs uppercase tracking-wider border-b-2 transition-all flex items-center gap-2 whitespace-nowrap ${
+              activeTab === 'logistics' 
+                ? 'border-orange-500 text-orange-600' 
+                : 'border-transparent text-neutral-500 hover:text-neutral-900'
+            }`}
+          >
+            <Truck className="w-4 h-4" />
+            Delivery & Logistics
           </button>
         </div>
       </div>
@@ -1184,6 +1305,192 @@ export default function AdminPanel({
               </div>
 
             </div>
+          </div>
+        )}
+
+        {/* TAB 5: CATEGORIES MANAGER */}
+        {activeTab === 'categories' && (
+          <div className="space-y-8 animate-fadeIn text-left">
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+              <div>
+                <h2 className="text-xl font-black uppercase tracking-tight text-neutral-950 dark:text-white">Store Categories Catalog</h2>
+                <p className="text-xs text-neutral-400">Add, edit, or remove wardrobe categories that dynamically map to your storefront.</p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+              {/* Add/Edit Form */}
+              <div className="bg-white p-6 rounded-2xl border border-neutral-100 shadow-2xs space-y-4 h-fit">
+                <span className="text-[10px] font-black uppercase text-orange-500 tracking-widest block">
+                  {editingCategoryId ? 'Modify Category' : 'Provision Category'}
+                </span>
+                
+                <form onSubmit={handleSaveCategory} className="space-y-4">
+                  <div>
+                    <label className="block text-[10px] font-black uppercase text-neutral-400 mb-1">Category Name *</label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="e.g. Cord Sets, Tracks, Jackets"
+                      value={categoryNameInput}
+                      onChange={(e) => setCategoryNameInput(e.target.value)}
+                      className="w-full p-2.5 border border-neutral-200 rounded-lg text-xs"
+                    />
+                  </div>
+
+                  <div className="flex gap-2">
+                    <button
+                      type="submit"
+                      disabled={submitting}
+                      className="flex-1 bg-neutral-950 hover:bg-neutral-800 disabled:opacity-50 text-white font-black text-xs uppercase tracking-widest py-3 rounded-xl transition-colors"
+                    >
+                      {submitting ? 'Saving...' : editingCategoryId ? 'Update Category' : 'Add Category'}
+                    </button>
+                    {editingCategoryId && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCategoryNameInput('');
+                          setEditingCategoryId(null);
+                        }}
+                        className="bg-neutral-100 hover:bg-neutral-200 text-neutral-800 font-black text-xs uppercase px-4 rounded-xl transition-colors"
+                      >
+                        Cancel
+                      </button>
+                    )}
+                  </div>
+                </form>
+              </div>
+
+              {/* Category List */}
+              <div className="md:col-span-2 bg-white p-6 rounded-2xl border border-neutral-100 shadow-2xs space-y-4">
+                <span className="text-[10px] font-black uppercase text-neutral-400 tracking-widest block">Active Store Categories</span>
+                
+                <div className="divide-y divide-neutral-100">
+                  {categories.map((cat) => (
+                    <div key={cat} className="py-3 flex items-center justify-between">
+                      <div className="space-y-0.5">
+                        <span className="font-bold text-sm text-neutral-900">{cat}</span>
+                        <div className="text-[10px] text-neutral-400">
+                          {allProducts.filter(p => p.category.toLowerCase() === cat.toLowerCase()).length} associated products
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => {
+                            setCategoryNameInput(cat);
+                            setEditingCategoryId(cat.toLowerCase());
+                          }}
+                          className="p-1.5 hover:bg-neutral-50 text-neutral-600 rounded-lg border border-neutral-100"
+                          title="Edit category name"
+                        >
+                          <Edit2 className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={() => handleDeleteCategory(cat)}
+                          className="p-1.5 hover:bg-red-50 text-red-600 rounded-lg border border-neutral-100 hover:border-red-100"
+                          title="Delete category"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* TAB 6: DELIVERY & LOGISTICS SETTINGS */}
+        {activeTab === 'logistics' && (
+          <div className="space-y-8 animate-fadeIn text-left max-w-3xl mx-auto">
+            <div>
+              <h2 className="text-xl font-black uppercase tracking-tight text-neutral-950 dark:text-white">Logistics & Shipping Settings</h2>
+              <p className="text-xs text-neutral-400">Configure delivery charges, threshold limits, and manage local express delivery eligibility.</p>
+            </div>
+
+            <form onSubmit={handleSaveLogistics} className="bg-white p-6 md:p-8 rounded-2xl border border-neutral-100 shadow-2xs space-y-6">
+              <span className="text-[10px] font-black uppercase text-orange-500 tracking-widest block">Logistics Strategy Configuration</span>
+              
+              {/* Express Delivery Switch */}
+              <div className="flex items-center justify-between p-4 bg-orange-50/10 border border-orange-100 rounded-xl">
+                <div className="space-y-0.5">
+                  <span className="font-bold text-xs text-neutral-900 uppercase block">Enable Express Fast Delivery</span>
+                  <p className="text-[10px] text-neutral-400">Allow same-day, localized ultra-fast delivery options during checkout.</p>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input 
+                    type="checkbox" 
+                    checked={logisticsExpressEnabled} 
+                    onChange={(e) => setLogisticsExpressEnabled(e.target.checked)}
+                    className="sr-only peer" 
+                  />
+                  <div className="w-9 h-5 bg-neutral-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-neutral-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-orange-500"></div>
+                </label>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
+                <div>
+                  <label className="block text-[10px] font-black uppercase text-neutral-400 mb-1">Normal Delivery Fee (₹)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    required
+                    value={logisticsNormalCharge}
+                    onChange={(e) => setLogisticsNormalCharge(Number(e.target.value))}
+                    className="w-full p-2.5 border border-neutral-200 rounded-lg text-xs"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-black uppercase text-neutral-400 mb-1">Express Delivery Fee (₹)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    required
+                    disabled={!logisticsExpressEnabled}
+                    value={logisticsExpressCharge}
+                    onChange={(e) => setLogisticsExpressCharge(Number(e.target.value))}
+                    className="w-full p-2.5 border border-neutral-200 rounded-lg text-xs disabled:opacity-50"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-black uppercase text-neutral-400 mb-1">Free Delivery Threshold (₹)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    required
+                    value={logisticsFreeThreshold}
+                    onChange={(e) => setLogisticsFreeThreshold(Number(e.target.value))}
+                    className="w-full p-2.5 border border-neutral-200 rounded-lg text-xs"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-black uppercase text-neutral-400 mb-1">Eligible Same-Day Express Locations</label>
+                <textarea
+                  disabled={!logisticsExpressEnabled}
+                  value={logisticsLocationsInput}
+                  onChange={(e) => setLogisticsLocationsInput(e.target.value)}
+                  placeholder="e.g. Tiruchirappalli, Tennur, Srirangam, Cantonment"
+                  rows={3}
+                  className="w-full p-2.5 border border-neutral-200 rounded-lg text-xs disabled:opacity-50"
+                />
+                <p className="text-[9px] text-neutral-400 mt-1">Separate eligible express delivery locations with commas (e.g. Trichy, Tennur, Thillai Nagar).</p>
+              </div>
+
+              <button
+                type="submit"
+                disabled={submitting}
+                className="w-full bg-neutral-950 hover:bg-neutral-800 disabled:opacity-50 text-white font-black text-xs uppercase tracking-widest py-3.5 rounded-xl transition-colors"
+              >
+                {submitting ? 'Saving Configurations...' : 'Save Logistics Settings'}
+              </button>
+            </form>
           </div>
         )}
 
