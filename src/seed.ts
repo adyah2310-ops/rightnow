@@ -1227,38 +1227,45 @@ function cleanUndefined<T>(obj: T): T {
 }
 
 // Helper to convert compact RAW representation to fully typed Product models
-export const INITIAL_PRODUCTS: Product[] = RAW_PRODUCTS_DATA.map((p) => cleanUndefined({
-  id: p.id,
-  name: p.name,
-  brand: 'Rightnow Garments',
-  category: p.category,
-  subCategory: p.subCategory,
-  price: p.price,
-  offerPrice: p.offerPrice,
-  images: p.images,
-  sizes: p.sizes,
-  colors: p.colors,
-  ratings: p.ratings,
-  reviewCount: p.reviewCount,
-  description: p.description,
-  specifications: {
-    material: p.material,
-    fit: p.fit,
-    sleeve: p.sleeve,
-    neckline: p.neckline,
-    fabric: p.fabric,
-    occasion: p.occasion
-  },
-  stock: p.stock,
-  isTrending: p.isTrending,
-  isBestSeller: p.isBestSeller,
-  isNewArrival: p.isNewArrival,
-  isTodayDeal: p.isTodayDeal,
-  isSummerCollection: p.isSummerCollection,
-  isFormalWear: p.isFormalWear,
-  isCasualWear: p.isCasualWear,
-  isFestivalCollection: p.isFestivalCollection
-}));
+export const INITIAL_PRODUCTS: Product[] = RAW_PRODUCTS_DATA.map((p, idx) => {
+  const catCode = (p.category || 'GAR').substring(0, 3).toUpperCase();
+  const idClean = p.id.replace('prod_', '').substring(0, 8).toUpperCase();
+  const defaultSku = `RNG-${catCode}-${idClean}`;
+
+  return cleanUndefined({
+    id: p.id,
+    sku: defaultSku,
+    name: p.name,
+    brand: 'Rightnow Garments',
+    category: p.category,
+    subCategory: p.subCategory,
+    price: p.price,
+    offerPrice: p.offerPrice,
+    images: p.images,
+    sizes: p.sizes,
+    colors: p.colors,
+    ratings: p.ratings,
+    reviewCount: p.reviewCount,
+    description: p.description,
+    specifications: {
+      material: p.material,
+      fit: p.fit,
+      sleeve: p.sleeve,
+      neckline: p.neckline,
+      fabric: p.fabric,
+      occasion: p.occasion
+    },
+    stock: p.stock,
+    isTrending: p.isTrending,
+    isBestSeller: p.isBestSeller,
+    isNewArrival: p.isNewArrival,
+    isTodayDeal: p.isTodayDeal,
+    isSummerCollection: p.isSummerCollection,
+    isFormalWear: p.isFormalWear,
+    isCasualWear: p.isCasualWear,
+    isFestivalCollection: p.isFestivalCollection
+  });
+});
 
 export const INITIAL_COUPONS: Coupon[] = [
   {
@@ -1287,25 +1294,31 @@ export const INITIAL_COUPONS: Coupon[] = [
   }
 ];
 
-export async function seedDatabase() {
+export async function seedDatabase(existingProductsSnapshot?: any) {
   try {
     const productsRef = collection(db, 'products');
-    const productsSnapshot = await getDocs(productsRef);
+    const productsSnapshot = existingProductsSnapshot || (await getDocs(productsRef));
     
-    // Clean up obsolete products that are not part of our new 50+ list
+    // Quick exit if database is already healthy and seeded with products
+    if (!productsSnapshot.empty && productsSnapshot.size >= INITIAL_PRODUCTS.length - 5) {
+      console.log(`Database catalog healthy (${productsSnapshot.size} products loaded). Skipping redundant seed execution.`);
+      return;
+    }
+
+    // Clean up obsolete products that are not part of our list
     const activeIds = new Set(INITIAL_PRODUCTS.map(p => p.id));
-    const extraProducts = productsSnapshot.docs.filter(doc => !activeIds.has(doc.id));
+    const extraProducts = productsSnapshot.docs.filter((doc: any) => !activeIds.has(doc.id));
     if (extraProducts.length > 0) {
       console.log(`Removing ${extraProducts.length} obsolete products...`);
       const cleanupBatch = writeBatch(db);
-      extraProducts.forEach(doc => {
+      extraProducts.forEach((doc: any) => {
         cleanupBatch.delete(doc.ref);
       });
       await cleanupBatch.commit();
     }
 
     const existingIds = new Set<string>();
-    productsSnapshot.forEach(doc => {
+    productsSnapshot.forEach((doc: any) => {
       if (activeIds.has(doc.id)) {
         existingIds.add(doc.id);
       }
@@ -1315,7 +1328,6 @@ export async function seedDatabase() {
 
     if (missingProducts.length > 0) {
       console.log(`Seeding ${missingProducts.length} missing products...`);
-      // Since Firestore batch limit is 500 now, but chunking in batches of 40 is extremely safe and prevents timeouts.
       const BATCH_SIZE = 40;
       for (let i = 0; i < missingProducts.length; i += BATCH_SIZE) {
         const batch = writeBatch(db);
@@ -1325,11 +1337,8 @@ export async function seedDatabase() {
           batch.set(docRef, product);
         });
         await batch.commit();
-        console.log(`Committed chunk ${i / BATCH_SIZE + 1} of ${Math.ceil(missingProducts.length / BATCH_SIZE)}`);
       }
       console.log('Successfully seeded missing products!');
-    } else {
-      console.log('All initial products already seeded!');
     }
 
     const couponsRef = collection(db, 'coupons');
@@ -1351,8 +1360,6 @@ export async function seedDatabase() {
       });
       await batch.commit();
       console.log('Successfully seeded missing coupons!');
-    } else {
-      console.log('All initial coupons already seeded!');
     }
   } catch (error) {
     console.error('Error seeding database:', error);

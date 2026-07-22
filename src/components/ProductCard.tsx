@@ -42,19 +42,6 @@ export default function ProductCard({
           loading="lazy"
         />
 
-        {/* Wishlist Button */}
-        <button
-          id={`wishlist-btn-${product.id}`}
-          onClick={(e) => {
-            e.stopPropagation();
-            onToggleWishlist(product);
-          }}
-          className="absolute top-3 right-3 bg-white/90 backdrop-blur-xs hover:bg-white text-neutral-900 p-2 rounded-full shadow-md transition-all z-10 hover:scale-110 active:scale-95"
-          title={isWishlisted ? "Remove from Wishlist" : "Add to Wishlist"}
-        >
-          <Heart className={`w-4 h-4 transition-colors ${isWishlisted ? 'fill-red-500 text-red-500' : 'text-neutral-600'}`} />
-        </button>
-
         {/* Discount Tag */}
         {discount > 0 && (
           <div 

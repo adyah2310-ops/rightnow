@@ -1,14 +1,25 @@
 import React, { useState, useEffect } from 'react';
-import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, setDoc } from 'firebase/firestore';
+import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, setDoc, getDoc } from 'firebase/firestore';
 import { db } from '../firebase';
-import { Product, Order, Coupon } from '../types';
+import { Product, Order, Coupon, Employee, POSSale } from '../types';
 import { 
   BarChart, Layers, Inbox, Percent, AlertTriangle, Plus, Edit2, Trash2, 
   Check, X, Eye, FileText, TrendingUp, ShoppingCart, Users, CheckCircle, 
-  Truck, PackageCheck, AlertCircle, ShoppingBag, XCircle, Search, RefreshCw, Settings
+  Truck, PackageCheck, AlertCircle, ShoppingBag, XCircle, Search, RefreshCw, Settings,
+  Lock, Key, LogOut, Clock, ShieldCheck, Receipt, Landmark, Boxes, ArrowLeftRight, HelpCircle,
+  Globe, Store, CreditCard, Smartphone, Banknote, PieChart, Award, Sparkles
 } from 'lucide-react';
 
+// Import newly integrated POS & GST billing modules
+import POSBilling from './pos/POSBilling';
+import PurchasesManager from './pos/PurchasesManager';
+import InventoryManager from './pos/InventoryManager';
+import CustomersLoyalty from './pos/CustomersLoyalty';
+import POSReports from './pos/POSReports';
+import SettingsManager from './pos/SettingsManager';
+
 interface AdminPanelProps {
+  user?: { email: string | null; name: string } | null;
   allProducts: Product[];
   allOrders: Order[];
   allCoupons: Coupon[];
@@ -24,6 +35,7 @@ interface AdminPanelProps {
 }
 
 export default function AdminPanel({
+  user,
   allProducts,
   allOrders,
   allCoupons,
@@ -31,8 +43,57 @@ export default function AdminPanel({
   categories,
   deliverySettings
 }: AdminPanelProps) {
-  // Navigation tabs
-  const [activeTab, setActiveTab] = useState<'analytics' | 'products' | 'orders' | 'coupons' | 'categories' | 'logistics'>('analytics');
+  // Always use logged-in Gmail user as Owner Admin
+  const currentEmployee: Employee = {
+    id: 'owner_admin',
+    name: user?.name || user?.email?.split('@')[0] || 'Store Owner',
+    email: user?.email || 'owner@rightnowgarments.com',
+    phone: '+91 94432 10982',
+    role: 'Admin',
+    pinCode: '1234',
+    status: 'Active',
+    createdDate: new Date().toISOString()
+  };
+  const [employeesList, setEmployeesList] = useState<Employee[]>([]);
+
+  // Navigation tabs - Extended for combined E-Commerce & Retail POS
+  const [activeTab, setActiveTab] = useState<
+    'analytics' | 'products' | 'orders' | 'coupons' | 'categories' | 'logistics' |
+    'pos-billing' | 'pos-inventory' | 'pos-suppliers' | 'pos-purchases' | 'pos-customers' | 'pos-employees' | 'pos-reports' | 'pos-settings'
+  >('analytics');
+
+  // Business Profile for POS Billings and GST receipts
+  const [businessProfile, setBusinessProfile] = useState({
+    storeName: 'Rightnow Garments',
+    storeAddress: '12, Factory Street, Tiruchirappalli, Tamil Nadu, 620001',
+    storePhone: '+91 94432 10982',
+    storeEmail: 'billing@rightnowgarments.com',
+    storeGstin: '33AAAAA1111A1Z1',
+    upiQrUrl: 'https://images.unsplash.com/photo-1622630998477-20aa696ecb05?q=80&w=300&auto=format&fit=crop'
+  });
+
+  const fetchBusinessProfile = async () => {
+    try {
+      const snap = await getDoc(doc(db, 'settings', 'business_profile'));
+      if (snap.exists()) {
+        const d = snap.data();
+        setBusinessProfile({
+          storeName: d.storeName || 'Rightnow Garments',
+          storeAddress: d.storeAddress || '12, Factory Street, Tiruchirappalli, Tamil Nadu, 620001',
+          storePhone: d.storePhone || '+91 94432 10982',
+          storeEmail: d.storeEmail || 'billing@rightnowgarments.com',
+          storeGstin: d.storeGstin || '33AAAAA1111A1Z1',
+          upiQrUrl: d.upiQrUrl || 'https://images.unsplash.com/photo-1622630998477-20aa696ecb05?q=80&w=300&auto=format&fit=crop'
+        });
+      }
+    } catch (e) {
+      console.error('Error loading business profile settings:', e);
+    }
+  };
+
+  useEffect(() => {
+    fetchBusinessProfile();
+  }, [activeTab]);
   
   // Search state
   const [searchTerm, setSearchTerm] = useState('');
@@ -43,6 +104,7 @@ export default function AdminPanel({
   // Add/Edit product states
   const [isEditingProduct, setIsEditingProduct] = useState(false);
   const [productFormId, setProductFormId] = useState('');
+  const [productSku, setProductSku] = useState('');
   const [productName, setProductName] = useState('');
   const [productBrand, setProductBrand] = useState('Rightnow Garments');
   const [productCategory, setProductCategory] = useState('Shirts');
@@ -54,6 +116,7 @@ export default function AdminPanel({
   const [productColors, setProductColors] = useState<string[]>(['Black', 'White']);
   const [productStock, setProductStock] = useState(20);
   const [productDescription, setProductDescription] = useState('');
+  const [productGstPercent, setProductGstPercent] = useState<number>(5);
   
   // Specs
   const [specMaterial, setSpecMaterial] = useState('100% Premium Cotton');
@@ -97,14 +160,60 @@ export default function AdminPanel({
     }
   }, [deliverySettings]);
 
-  // Submitting status
+  // Analytics Channel view filter state
+  const [analyticsChannel, setAnalyticsChannel] = useState<'COMBINED' | 'DIGITAL_ECOM' | 'RETAIL_POS'>('COMBINED');
+  const [posSalesList, setPosSalesList] = useState<POSSale[]>([]);
+
+  // Fetch employees list from Firestore
+  const fetchEmployeesList = async () => {
+    try {
+      const snap = await getDocs(collection(db, 'employees'));
+      const list: Employee[] = [];
+      snap.forEach(doc => {
+        list.push({ id: doc.id, ...doc.data() } as Employee);
+      });
+      setEmployeesList(list);
+    } catch (e) {
+      console.error("Error fetching employees database:", e);
+    }
+  };
+
+  // Fetch offline POS sales list from Firestore for separate POS analytics
+  const fetchPosSales = async () => {
+    try {
+      const snap = await getDocs(collection(db, 'pos_sales'));
+      const list: POSSale[] = [];
+      snap.forEach(doc => {
+        list.push({ id: doc.id, ...doc.data() } as POSSale);
+      });
+      setPosSalesList(list);
+    } catch (e) {
+      console.error("Error fetching POS sales database:", e);
+    }
+  };
+
+  useEffect(() => {
+    fetchEmployeesList();
+    fetchPosSales();
+  }, [activeTab]);
+
+  // Alert message helper
   const [submitting, setSubmitting] = useState(false);
   const [alertMsg, setAlertMsg] = useState({ type: '', text: '' });
+
+  // Generate unique SKU code
+  const generateUniqueSku = (cat?: string, name?: string) => {
+    const prefix = 'RNG';
+    const catPart = (cat || productCategory || 'GAR').substring(0, 3).toUpperCase();
+    const randomNum = Math.floor(1000 + Math.random() * 9000);
+    return `${prefix}-${catPart}-${randomNum}`;
+  };
 
   // Reset product form
   const resetProductForm = () => {
     setIsEditingProduct(false);
     setProductFormId('');
+    setProductSku('');
     setProductName('');
     setProductBrand('Rightnow Garments');
     setProductCategory('Shirts');
@@ -116,6 +225,7 @@ export default function AdminPanel({
     setProductColors(['Black', 'White']);
     setProductStock(20);
     setProductDescription('');
+    setProductGstPercent(5);
     setSpecMaterial('100% Premium Cotton');
     setSpecFit('Regular Fit');
     setSpecSleeve('Full Sleeve');
@@ -133,6 +243,24 @@ export default function AdminPanel({
     setTimeout(() => setAlertMsg({ type: '', text: '' }), 4000);
   };
 
+  // Quick update price & GST rate directly from products table
+  const handleQuickUpdateGstAndPrice = async (p: Product, newPrice: number, newOfferPrice: number, newGst: number) => {
+    try {
+      const docRef = doc(db, 'products', p.id);
+      await updateDoc(docRef, {
+        price: Number(newPrice),
+        offerPrice: Number(newOfferPrice),
+        gstPercent: Number(newGst),
+        updatedDate: new Date().toISOString()
+      });
+      triggerAlert('success', `Updated GST (${newGst}%) & Prices for "${p.name}"`);
+      onRefreshData();
+    } catch (err) {
+      console.error(err);
+      triggerAlert('error', `Failed to update GST/Price for "${p.name}"`);
+    }
+  };
+
   // Save or edit product
   const handleSaveProduct = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -145,8 +273,24 @@ export default function AdminPanel({
       return;
     }
 
+    // Process & Validate SKU ID
+    const finalSku = productSku.trim() 
+      ? productSku.trim().toUpperCase() 
+      : generateUniqueSku(productCategory, productName);
+
+    // Check SKU Uniqueness
+    const duplicateSkuProduct = allProducts.find(
+      p => p.sku && p.sku.trim().toUpperCase() === finalSku && p.id !== productFormId
+    );
+    if (duplicateSkuProduct) {
+      triggerAlert('error', `SKU ID "${finalSku}" is already assigned to "${duplicateSkuProduct.name}". Please enter or auto-generate a unique SKU.`);
+      setSubmitting(false);
+      return;
+    }
+
     const payload: Omit<Product, 'id'> = {
       name: productName,
+      sku: finalSku,
       brand: productBrand,
       category: productCategory,
       subCategory: productSubCategory,
@@ -169,7 +313,8 @@ export default function AdminPanel({
       stock: Number(productStock),
       isTrending: flagTrending,
       isBestSeller: flagBestSeller,
-      isNewArrival: flagNewArrival
+      isNewArrival: flagNewArrival,
+      gstPercent: Number(productGstPercent)
     };
 
     try {
@@ -177,12 +322,12 @@ export default function AdminPanel({
         // Edit existing product
         const docRef = doc(db, 'products', productFormId);
         await updateDoc(docRef, payload);
-        triggerAlert('success', `Product "${productName}" updated successfully!`);
+        triggerAlert('success', `Product "${productName}" (SKU: ${finalSku}) updated successfully!`);
       } else {
         // Add new product
         const id = `prod_${Date.now()}`;
         await addDoc(collection(db, 'products'), { ...payload, id });
-        triggerAlert('success', `Product "${productName}" created successfully!`);
+        triggerAlert('success', `Product "${productName}" (SKU: ${finalSku}) created successfully!`);
       }
       resetProductForm();
       onRefreshData();
@@ -198,6 +343,7 @@ export default function AdminPanel({
   const handleStartEdit = (product: Product) => {
     setIsEditingProduct(true);
     setProductFormId(product.id);
+    setProductSku(product.sku || generateUniqueSku(product.category, product.name));
     setProductName(product.name);
     setProductBrand(product.brand);
     setProductCategory(product.category);
@@ -209,6 +355,7 @@ export default function AdminPanel({
     setProductColors(product.colors);
     setProductStock(product.stock);
     setProductDescription(product.description);
+    setProductGstPercent(product.gstPercent || 5);
     setSpecMaterial(product.specifications.material);
     setSpecFit(product.specifications.fit);
     setSpecSleeve(product.specifications.sleeve || '');
@@ -381,14 +528,57 @@ export default function AdminPanel({
     }
   };
 
-  // KPI Calculations
-  const totalSales = allOrders
-    .filter(o => o.status !== 'Cancelled' && o.status !== 'Payment Verification Pending')
-    .reduce((acc, o) => acc + o.totalAmount, 0);
-
+  // Detailed Separate Channel Calculations
+  // 1. Digital E-Commerce Web Orders
+  const validOnlineOrders = allOrders.filter(o => o.status !== 'Cancelled' && o.status !== 'Payment Verification Pending');
+  const ecomRevenue = validOnlineOrders.reduce((acc, o) => acc + o.totalAmount, 0);
+  const ecomCount = validOnlineOrders.length;
+  const ecomAov = ecomCount > 0 ? ecomRevenue / ecomCount : 0;
   const pendingVerificationOrders = allOrders.filter(o => o.status === 'Payment Verification Pending');
   const activeOrders = allOrders.filter(o => o.status !== 'Delivered' && o.status !== 'Cancelled');
   const completedOrdersCount = allOrders.filter(o => o.status === 'Delivered').length;
+  const ecomDeliveryCharges = validOnlineOrders.reduce((acc, o) => acc + (o.deliveryCharge || 0), 0);
+  const ecomGstTotal = validOnlineOrders.flatMap(o => o.items).reduce((sum, item) => {
+    const gstPct = item.gstPercent || 5;
+    const basePrice = item.price;
+    const taxable = basePrice / (1 + (gstPct / 100));
+    return sum + ((basePrice - taxable) * item.quantity);
+  }, 0);
+
+  // 2. Retail Outlet POS In-Store Transactions
+  const validPosSales = posSalesList.filter(s => s.status !== 'Cancelled');
+  const posRevenue = validPosSales.reduce((acc, s) => acc + s.grandTotal, 0);
+  const posCount = validPosSales.length;
+  const posAtv = posCount > 0 ? posRevenue / posCount : 0;
+  const posGstTotal = validPosSales.reduce((acc, s) => acc + s.taxTotal, 0);
+
+  const posCashTotal = validPosSales.filter(s => s.paymentMode === 'Cash').reduce((a, s) => a + s.grandTotal, 0);
+  const posCashCount = validPosSales.filter(s => s.paymentMode === 'Cash').length;
+  const posUpiTotal = validPosSales.filter(s => s.paymentMode === 'UPI').reduce((a, s) => a + s.grandTotal, 0);
+  const posUpiCount = validPosSales.filter(s => s.paymentMode === 'UPI').length;
+  const posCardTotal = validPosSales.filter(s => s.paymentMode === 'Card').reduce((a, s) => a + s.grandTotal, 0);
+  const posCardCount = validPosSales.filter(s => s.paymentMode === 'Card').length;
+  const posSplitTotal = validPosSales.filter(s => s.paymentMode === 'Split').reduce((a, s) => a + s.grandTotal, 0);
+  const posSplitCount = validPosSales.filter(s => s.paymentMode === 'Split').length;
+
+  // Cashier Leaderboard for Retail Outlet
+  const cashierMap: Record<string, { name: string; total: number; count: number }> = validPosSales.reduce(
+    (acc: Record<string, { name: string; total: number; count: number }>, s) => {
+      const name = s.cashierName || 'Cashier';
+      if (!acc[name]) acc[name] = { name, total: 0, count: 0 };
+      acc[name].total += s.grandTotal;
+      acc[name].count += 1;
+      return acc;
+    },
+    {}
+  );
+  const cashierList = Object.values(cashierMap).sort((a, b) => b.total - a.total);
+
+  // 3. Combined Omnichannel Metrics
+  const combinedRevenue = ecomRevenue + posRevenue;
+  const totalSales = combinedRevenue;
+  const ecomSharePct = combinedRevenue > 0 ? Math.round((ecomRevenue / combinedRevenue) * 100) : 0;
+  const posSharePct = combinedRevenue > 0 ? Math.round((posRevenue / combinedRevenue) * 100) : 0;
   
   // Low Stock Items list
   const lowStockProducts = allProducts.filter(p => p.stock <= 5);
@@ -397,7 +587,8 @@ export default function AdminPanel({
   const filteredProducts = allProducts.filter(p => 
     p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     p.category.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    p.brand.toLowerCase().includes(searchTerm.toLowerCase())
+    p.brand.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    p.sku?.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   return (
@@ -416,264 +607,750 @@ export default function AdminPanel({
       )}
 
       {/* Admin header rail */}
-      <div className="bg-neutral-950 text-white py-8 px-6 md:px-12 shrink-0">
+      <div className="bg-neutral-950 text-white py-6 px-6 md:px-12 shrink-0 border-b border-neutral-800">
         <div className="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
           <div>
             <span className="text-orange-500 text-xs font-black uppercase tracking-widest block mb-1">
-              Store Owner Control Centre
+              Store Operator Control Centre
             </span>
-            <h1 className="text-3xl font-black tracking-tight uppercase">
-              Rightnow <span className="text-orange-500">Garments</span> Dashboard
+            <h1 className="text-2xl font-black tracking-tight uppercase">
+              Rightnow <span className="text-orange-500">Garments</span> POS Hub
             </h1>
-            <p className="text-xs text-neutral-400 mt-1">
-              Manage inventory, verify UPI proof screenshots, and fulfill fashion orders.
+            <p className="text-[10px] text-neutral-400 mt-1 uppercase font-bold">
+              Owner Admin: <span className="text-amber-400">{currentEmployee.name}</span> ({currentEmployee.email})
             </p>
           </div>
 
-          <div className="flex gap-2">
+          <div className="flex items-center gap-2">
+            <span className="bg-emerald-950/80 border border-emerald-800 text-emerald-400 px-3 py-2.5 rounded-xl text-xs font-bold flex items-center gap-1.5">
+              <ShieldCheck className="w-4 h-4 text-emerald-500" /> Google Auth Verified
+            </span>
             <button 
               onClick={() => { onRefreshData(); triggerAlert('success', 'Database updated with latest cloud records!'); }}
-              className="bg-neutral-900 hover:bg-neutral-800 p-3 rounded-xl border border-neutral-800 flex items-center gap-1.5 text-xs font-bold transition-all"
+              className="bg-neutral-900 hover:bg-neutral-800 p-3 rounded-xl border border-neutral-800 flex items-center gap-1.5 text-xs font-bold transition-all text-white cursor-pointer"
             >
               <RefreshCw className="w-3.5 h-3.5" />
-              Sync Sync
+              Sync DB
             </button>
-            <div className="bg-orange-500 text-white font-black text-xs uppercase px-4 py-3 rounded-xl shadow-md">
-              Level: Administrator
-            </div>
           </div>
         </div>
       </div>
 
-      {/* Admin Tab Switching Navigation */}
+      {/* Admin Tab Switching Navigation - Categorized by Channel and constrained by role */}
       <div className="border-b border-neutral-200 bg-white sticky top-0 z-30 shadow-xs">
-        <div className="max-w-7xl mx-auto px-6 flex overflow-x-auto scrollbar-none">
-          <button
-            onClick={() => setActiveTab('analytics')}
-            className={`py-4 px-6 font-black text-xs uppercase tracking-wider border-b-2 transition-all flex items-center gap-2 whitespace-nowrap ${
-              activeTab === 'analytics' 
-                ? 'border-orange-500 text-orange-600' 
-                : 'border-transparent text-neutral-500 hover:text-neutral-900'
-            }`}
-          >
-            <BarChart className="w-4 h-4" />
-            Sales & Analytics
-          </button>
-          <button
-            onClick={() => setActiveTab('products')}
-            className={`py-4 px-6 font-black text-xs uppercase tracking-wider border-b-2 transition-all flex items-center gap-2 whitespace-nowrap ${
-              activeTab === 'products' 
-                ? 'border-orange-500 text-orange-600' 
-                : 'border-transparent text-neutral-500 hover:text-neutral-900'
-            }`}
-          >
-            <Layers className="w-4 h-4" />
-            Manage Products ({allProducts.length})
-          </button>
-          <button
-            onClick={() => setActiveTab('orders')}
-            className={`py-4 px-6 font-black text-xs uppercase tracking-wider border-b-2 transition-all flex items-center gap-2 whitespace-nowrap ${
-              activeTab === 'orders' 
-                ? 'border-orange-500 text-orange-600' 
-                : 'border-transparent text-neutral-500 hover:text-neutral-900'
-            }`}
-          >
-            <Inbox className="w-4 h-4" />
-            Verify orders ({allOrders.length})
-            {pendingVerificationOrders.length > 0 && (
-              <span className="bg-red-500 text-white text-[9px] font-black px-1.5 py-0.5 rounded-full animate-pulse">
-                {pendingVerificationOrders.length} Pending
-              </span>
+        <div className="max-w-7xl mx-auto px-6 py-2 flex flex-col gap-2">
+          
+          {/* Categorized group 1: E-COMMERCE HUB (Only visible for Admins) */}
+          {currentEmployee.role === 'Admin' && (
+            <div className="flex items-center gap-3 border-b border-neutral-100 pb-1.5 overflow-x-auto scrollbar-none">
+              <span className="text-[9px] font-black uppercase tracking-widest text-neutral-400 shrink-0 select-none bg-neutral-100 px-2 py-0.5 rounded">Digital E-Com Platform</span>
+              
+              <button
+                onClick={() => setActiveTab('analytics')}
+                className={`py-1.5 px-3 rounded-lg font-black text-[11px] uppercase tracking-wider transition-all flex items-center gap-1.5 whitespace-nowrap ${
+                  activeTab === 'analytics' 
+                    ? 'bg-neutral-950 text-white shadow-xs' 
+                    : 'text-neutral-500 hover:text-neutral-900'
+                }`}
+              >
+                <BarChart className="w-3.5 h-3.5" />
+                Sales & Analytics
+              </button>
+              
+              <button
+                onClick={() => setActiveTab('products')}
+                className={`py-1.5 px-3 rounded-lg font-black text-[11px] uppercase tracking-wider transition-all flex items-center gap-1.5 whitespace-nowrap ${
+                  activeTab === 'products' 
+                    ? 'bg-neutral-950 text-white shadow-xs' 
+                    : 'text-neutral-500 hover:text-neutral-900'
+                }`}
+              >
+                <Layers className="w-3.5 h-3.5" />
+                Products Catalogue
+              </button>
+              
+              <button
+                onClick={() => setActiveTab('orders')}
+                className={`py-1.5 px-3 rounded-lg font-black text-[11px] uppercase tracking-wider transition-all flex items-center gap-1.5 whitespace-nowrap ${
+                  activeTab === 'orders' 
+                    ? 'bg-neutral-950 text-white shadow-xs' 
+                    : 'text-neutral-500 hover:text-neutral-900'
+                }`}
+              >
+                <Inbox className="w-3.5 h-3.5" />
+                Verify Web Orders ({allOrders.length})
+                {pendingVerificationOrders.length > 0 && (
+                  <span className="bg-red-500 text-white text-[8px] font-black px-1.5 py-0.2 rounded-full animate-pulse">
+                    {pendingVerificationOrders.length}
+                  </span>
+                )}
+              </button>
+              
+              <button
+                onClick={() => setActiveTab('coupons')}
+                className={`py-1.5 px-3 rounded-lg font-black text-[11px] uppercase tracking-wider transition-all flex items-center gap-1.5 whitespace-nowrap ${
+                  activeTab === 'coupons' 
+                    ? 'bg-neutral-950 text-white shadow-xs' 
+                    : 'text-neutral-500 hover:text-neutral-900'
+                }`}
+              >
+                <Percent className="w-3.5 h-3.5" />
+                Promotional Coupons
+              </button>
+              
+              <button
+                onClick={() => setActiveTab('categories')}
+                className={`py-1.5 px-3 rounded-lg font-black text-[11px] uppercase tracking-wider transition-all flex items-center gap-1.5 whitespace-nowrap ${
+                  activeTab === 'categories' 
+                    ? 'bg-neutral-950 text-white shadow-xs' 
+                    : 'text-neutral-500 hover:text-neutral-900'
+                }`}
+              >
+                <Layers className="w-3.5 h-3.5" />
+                Categories
+              </button>
+              
+              <button
+                onClick={() => setActiveTab('logistics')}
+                className={`py-1.5 px-3 rounded-lg font-black text-[11px] uppercase tracking-wider transition-all flex items-center gap-1.5 whitespace-nowrap ${
+                  activeTab === 'logistics' 
+                    ? 'bg-neutral-950 text-white shadow-xs' 
+                    : 'text-neutral-500 hover:text-neutral-900'
+                }`}
+              >
+                <Truck className="w-3.5 h-3.5" />
+                Logistics Setup
+              </button>
+            </div>
+          )}
+
+          {/* Categorized group 2: PHYSICAL SHOWROOM RETAIL POS (Enforce role-based tab access) */}
+          <div className="flex items-center gap-3 overflow-x-auto scrollbar-none py-1">
+            <span className="text-[9px] font-black uppercase tracking-widest text-neutral-400 shrink-0 select-none bg-orange-50 text-orange-600 px-2 py-0.5 rounded border border-orange-100">Retail Outlet POS</span>
+            
+            {/* 1. POS Billing: Accessible to Admin, Manager, Cashier */}
+            <button
+              onClick={() => setActiveTab('pos-billing')}
+              className={`py-1.5 px-3 rounded-lg font-black text-[11px] uppercase tracking-wider transition-all flex items-center gap-1.5 whitespace-nowrap ${
+                activeTab === 'pos-billing' 
+                  ? 'bg-orange-500 text-white shadow-xs' 
+                  : 'text-neutral-500 hover:text-neutral-900'
+              }`}
+            >
+              <Receipt className="w-3.5 h-3.5" />
+              Cashier Billing screen
+            </button>
+
+            {/* 2. Central Inventory: Accessible to Admin, Manager */}
+            {(currentEmployee.role === 'Admin' || currentEmployee.role === 'Manager') && (
+              <button
+                onClick={() => setActiveTab('pos-inventory')}
+                className={`py-1.5 px-3 rounded-lg font-black text-[11px] uppercase tracking-wider transition-all flex items-center gap-1.5 whitespace-nowrap ${
+                  activeTab === 'pos-inventory' 
+                    ? 'bg-orange-500 text-white shadow-xs' 
+                    : 'text-neutral-500 hover:text-neutral-900'
+                }`}
+              >
+                <Boxes className="w-3.5 h-3.5" />
+                Central Stock ledger
+              </button>
             )}
-          </button>
-          <button
-            onClick={() => setActiveTab('coupons')}
-            className={`py-4 px-6 font-black text-xs uppercase tracking-wider border-b-2 transition-all flex items-center gap-2 whitespace-nowrap ${
-              activeTab === 'coupons' 
-                ? 'border-orange-500 text-orange-600' 
-                : 'border-transparent text-neutral-500 hover:text-neutral-900'
-            }`}
-          >
-            <Percent className="w-4 h-4" />
-            Coupons System
-          </button>
-          <button
-            onClick={() => setActiveTab('categories')}
-            className={`py-4 px-6 font-black text-xs uppercase tracking-wider border-b-2 transition-all flex items-center gap-2 whitespace-nowrap ${
-              activeTab === 'categories' 
-                ? 'border-orange-500 text-orange-600' 
-                : 'border-transparent text-neutral-500 hover:text-neutral-900'
-            }`}
-          >
-            <Layers className="w-4 h-4" />
-            Categories Manager ({categories.length})
-          </button>
-          <button
-            onClick={() => setActiveTab('logistics')}
-            className={`py-4 px-6 font-black text-xs uppercase tracking-wider border-b-2 transition-all flex items-center gap-2 whitespace-nowrap ${
-              activeTab === 'logistics' 
-                ? 'border-orange-500 text-orange-600' 
-                : 'border-transparent text-neutral-500 hover:text-neutral-900'
-            }`}
-          >
-            <Truck className="w-4 h-4" />
-            Delivery & Logistics
-          </button>
+
+            {/* 3. Bulk stock purchases: Accessible to Admin, Manager */}
+            {(currentEmployee.role === 'Admin' || currentEmployee.role === 'Manager') && (
+              <button
+                onClick={() => setActiveTab('pos-purchases')}
+                className={`py-1.5 px-3 rounded-lg font-black text-[11px] uppercase tracking-wider transition-all flex items-center gap-1.5 whitespace-nowrap ${
+                  activeTab === 'pos-purchases' 
+                    ? 'bg-orange-500 text-white shadow-xs' 
+                    : 'text-neutral-500 hover:text-neutral-900'
+                }`}
+              >
+                <ArrowLeftRight className="w-3.5 h-3.5" />
+                Bulk purchases
+              </button>
+            )}
+
+            {/* 5. Loyalty Customers Database: Accessible to Admin, Manager */}
+            {(currentEmployee.role === 'Admin' || currentEmployee.role === 'Manager') && (
+              <button
+                onClick={() => setActiveTab('pos-customers')}
+                className={`py-1.5 px-3 rounded-lg font-black text-[11px] uppercase tracking-wider transition-all flex items-center gap-1.5 whitespace-nowrap ${
+                  activeTab === 'pos-customers' 
+                    ? 'bg-orange-500 text-white shadow-xs' 
+                    : 'text-neutral-500 hover:text-neutral-900'
+                }`}
+              >
+                <Users className="w-3.5 h-3.5" />
+                Loyalty & Wallet
+              </button>
+            )}
+
+            {/* 7. Profit, P&L, GST taxation analytics: Accessible to Admin */}
+            {currentEmployee.role === 'Admin' && (
+              <button
+                onClick={() => setActiveTab('pos-reports')}
+                className={`py-1.5 px-3 rounded-lg font-black text-[11px] uppercase tracking-wider transition-all flex items-center gap-1.5 whitespace-nowrap ${
+                  activeTab === 'pos-reports' 
+                    ? 'bg-orange-500 text-white shadow-xs' 
+                    : 'text-neutral-500 hover:text-neutral-900'
+                }`}
+              >
+                <Landmark className="w-3.5 h-3.5" />
+                Profit & GST tax Reports
+              </button>
+            )}
+
+            {/* 8. Corporate billing settings: Accessible to Admin */}
+            {currentEmployee.role === 'Admin' && (
+              <button
+                onClick={() => setActiveTab('pos-settings')}
+                className={`py-1.5 px-3 rounded-lg font-black text-[11px] uppercase tracking-wider transition-all flex items-center gap-1.5 whitespace-nowrap ${
+                  activeTab === 'pos-settings' 
+                    ? 'bg-orange-500 text-white shadow-xs' 
+                    : 'text-neutral-500 hover:text-neutral-900'
+                }`}
+              >
+                <Settings className="w-3.5 h-3.5" />
+                Showroom Setup
+              </button>
+            )}
+
+          </div>
         </div>
       </div>
 
       {/* Main Container */}
       <div className="max-w-7xl mx-auto p-6 md:p-8 space-y-8">
         
-        {/* TAB 1: ANALYTICS */}
+        {/* TAB 1: SEPARATE SALES & ANALYTICS FOR DIGITAL E-COM & RETAIL OUTLET POS */}
         {activeTab === 'analytics' && (
           <div className="space-y-8 animate-fadeIn">
-            {/* Bento statistics grid */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-              
-              <div className="bg-white p-6 rounded-2xl border border-neutral-100 shadow-xs space-y-4">
-                <div className="flex items-center justify-between">
-                  <span className="text-[10px] font-black uppercase text-neutral-400 tracking-widest">Gross Sales (Paid)</span>
-                  <div className="p-2.5 bg-emerald-50 text-emerald-600 rounded-xl">
-                    <TrendingUp className="w-5 h-5" />
-                  </div>
+            
+            {/* Top Channel Selector Rail */}
+            <div className="bg-white p-5 rounded-2xl border border-neutral-100 shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+              <div className="text-left">
+                <div className="flex items-center gap-2">
+                  <span className="p-1.5 bg-orange-100 text-orange-600 rounded-lg">
+                    <BarChart className="w-4 h-4" />
+                  </span>
+                  <h2 className="text-sm font-black uppercase tracking-wider text-neutral-950">
+                    Channel Analytics & Sales Control
+                  </h2>
                 </div>
-                <div>
-                  <h3 className="text-2xl font-black text-neutral-950">₹{totalSales.toLocaleString('en-IN')}</h3>
-                  <p className="text-[10px] text-neutral-400 mt-1">Excludes pending or cancelled orders</p>
-                </div>
+                <p className="text-[11px] text-neutral-400 mt-0.5">
+                  Filter analytics between Digital E-Commerce website orders and Brick-and-Mortar Retail POS checkout counters.
+                </p>
               </div>
 
-              <div className="bg-white p-6 rounded-2xl border border-neutral-100 shadow-xs space-y-4">
-                <div className="flex items-center justify-between">
-                  <span className="text-[10px] font-black uppercase text-neutral-400 tracking-widest">Active Orders</span>
-                  <div className="p-2.5 bg-orange-50 text-orange-500 rounded-xl">
-                    <ShoppingCart className="w-5 h-5" />
-                  </div>
-                </div>
-                <div>
-                  <h3 className="text-2xl font-black text-neutral-950">{activeOrders.length} Orders</h3>
-                  <p className="text-[10px] text-neutral-400 mt-1">Currently in processing pipeline</p>
-                </div>
-              </div>
+              {/* Segmented Channel Switcher Buttons */}
+              <div className="flex items-center bg-neutral-100 p-1 rounded-xl border border-neutral-200/80 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setAnalyticsChannel('COMBINED')}
+                  className={`px-3.5 py-2 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all flex items-center gap-1.5 ${
+                    analyticsChannel === 'COMBINED' 
+                      ? 'bg-neutral-950 text-white shadow-xs' 
+                      : 'text-neutral-500 hover:text-neutral-900'
+                  }`}
+                >
+                  <BarChart className="w-3.5 h-3.5" />
+                  Combined Omnichannel
+                </button>
 
-              <div className="bg-white p-6 rounded-2xl border border-neutral-100 shadow-xs space-y-4">
-                <div className="flex items-center justify-between">
-                  <span className="text-[10px] font-black uppercase text-neutral-400 tracking-widest">Dispatched Delivery</span>
-                  <div className="p-2.5 bg-blue-50 text-blue-600 rounded-xl">
-                    <CheckCircle className="w-5 h-5" />
-                  </div>
-                </div>
-                <div>
-                  <h3 className="text-2xl font-black text-neutral-950">{completedOrdersCount} Delivered</h3>
-                  <p className="text-[10px] text-neutral-400 mt-1">Delivered to customers safely</p>
-                </div>
-              </div>
+                <button
+                  type="button"
+                  onClick={() => setAnalyticsChannel('DIGITAL_ECOM')}
+                  className={`px-3.5 py-2 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all flex items-center gap-1.5 ${
+                    analyticsChannel === 'DIGITAL_ECOM' 
+                      ? 'bg-indigo-600 text-white shadow-xs' 
+                      : 'text-neutral-500 hover:text-neutral-900'
+                  }`}
+                >
+                  <Globe className="w-3.5 h-3.5" />
+                  Digital E-Com Website
+                </button>
 
-              <div className="bg-white p-6 rounded-2xl border border-neutral-100 shadow-xs space-y-4">
-                <div className="flex items-center justify-between">
-                  <span className="text-[10px] font-black uppercase text-neutral-400 tracking-widest">Low Stock Alerts</span>
-                  <div className={`p-2.5 rounded-xl ${lowStockProducts.length > 0 ? 'bg-red-50 text-red-600 animate-pulse' : 'bg-neutral-50 text-neutral-400'}`}>
-                    <AlertTriangle className="w-5 h-5" />
-                  </div>
-                </div>
-                <div>
-                  <h3 className="text-2xl font-black text-neutral-950">{lowStockProducts.length} Items</h3>
-                  <p className="text-[10px] text-neutral-400 mt-1">Products with under 5 stock remaining</p>
-                </div>
+                <button
+                  type="button"
+                  onClick={() => setAnalyticsChannel('RETAIL_POS')}
+                  className={`px-3.5 py-2 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all flex items-center gap-1.5 ${
+                    analyticsChannel === 'RETAIL_POS' 
+                      ? 'bg-orange-500 text-white shadow-xs' 
+                      : 'text-neutral-500 hover:text-neutral-900'
+                  }`}
+                >
+                  <Store className="w-3.5 h-3.5" />
+                  Retail Outlet POS
+                </button>
               </div>
-
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-              {/* Sales Interactive Trend Plot */}
-              <div className="bg-white p-6 rounded-2xl border border-neutral-100 shadow-sm lg:col-span-2 space-y-6">
-                <div>
-                  <h3 className="text-base font-black text-neutral-950 uppercase tracking-tight">Sales Outlets Revenue</h3>
-                  <p className="text-xs text-neutral-400">Total transaction breakdown in Rightnow store by category</p>
+            {/* CHANNEL VIEW 1: DIGITAL E-COMMERCE WEBSITE ONLY */}
+            {analyticsChannel === 'DIGITAL_ECOM' && (
+              <div className="space-y-8 animate-fadeIn">
+                <div className="bg-indigo-950 text-white p-4 rounded-2xl border border-indigo-800 flex items-center justify-between">
+                  <div className="flex items-center gap-3 text-left">
+                    <Globe className="w-6 h-6 text-indigo-400" />
+                    <div>
+                      <h3 className="text-sm font-black uppercase tracking-wider">Digital E-Commerce Channel Performance</h3>
+                      <p className="text-[10px] text-indigo-200">Real-time online orders placed via web store front and payment gateway.</p>
+                    </div>
+                  </div>
+                  <span className="bg-indigo-800/80 text-indigo-200 text-[10px] font-mono px-3 py-1 rounded-full uppercase font-bold border border-indigo-700">
+                    Storefront Channel ID: ECOM_WEB
+                  </span>
                 </div>
 
-                {/* Hand crafted luxury SVG Chart */}
-                <div className="relative h-64 w-full flex items-end justify-between pt-6 px-4 border-b border-neutral-100 bg-neutral-50 rounded-xl">
-                  {/* Grid Lines */}
-                  <div className="absolute inset-x-0 top-1/4 border-b border-neutral-200/40"></div>
-                  <div className="absolute inset-x-0 top-2/4 border-b border-neutral-200/40"></div>
-                  <div className="absolute inset-x-0 top-3/4 border-b border-neutral-200/40"></div>
+                {/* E-Com KPI Grid */}
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-6">
+                  <div className="bg-white p-4 md:p-6 rounded-2xl border border-neutral-100 shadow-xs space-y-2 text-left">
+                    <span className="text-[9px] md:text-[10px] font-black uppercase text-neutral-400 tracking-widest block leading-tight">Digital Web Sales</span>
+                    <h3 className="text-lg md:text-2xl font-black text-indigo-950">₹{ecomRevenue.toLocaleString('en-IN')}</h3>
+                    <p className="text-[9px] md:text-[10px] text-neutral-400">Confirmed online purchases</p>
+                  </div>
 
-                  {['Shirts', 'T-Shirts', 'Jeans', 'Trousers', 'Jackets', 'Accessories'].map((cat, idx) => {
-                    const catTotal = allOrders
-                      .filter(o => o.status !== 'Cancelled')
-                      .flatMap(o => o.items)
-                      .filter(item => {
-                        const prod = allProducts.find(p => p.id === item.productId);
-                        return prod ? prod.category === cat : false;
-                      })
-                      .reduce((sum, item) => sum + (item.price * item.quantity), 0);
+                  <div className="bg-white p-4 md:p-6 rounded-2xl border border-neutral-100 shadow-xs space-y-2 text-left">
+                    <span className="text-[9px] md:text-[10px] font-black uppercase text-neutral-400 tracking-widest block leading-tight">Web Orders Count</span>
+                    <h3 className="text-lg md:text-2xl font-black text-indigo-950">{ecomCount} Orders</h3>
+                    <p className="text-[9px] md:text-[10px] text-neutral-400">Completed cart checkouts</p>
+                  </div>
 
-                    // Find max or set scale factor
-                    const percentHeight = Math.min(100, Math.max(8, (catTotal / 25000) * 100));
+                  <div className="bg-white p-4 md:p-6 rounded-2xl border border-neutral-100 shadow-xs space-y-2 text-left">
+                    <span className="text-[9px] md:text-[10px] font-black uppercase text-neutral-400 tracking-widest block leading-tight">Avg Order Value (AOV)</span>
+                    <h3 className="text-lg md:text-2xl font-black text-indigo-950">₹{ecomAov.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</h3>
+                    <p className="text-[9px] md:text-[10px] text-neutral-400">Per web transaction average</p>
+                  </div>
 
-                    return (
-                      <div key={cat} className="flex flex-col items-center gap-2 z-10 w-12 group">
-                        {/* Tooltip value */}
-                        <div className="opacity-0 group-hover:opacity-100 transition-opacity absolute mb-20 bg-neutral-900 text-white text-[10px] font-black py-1 px-2.5 rounded shadow-xl -translate-y-4">
-                          ₹{catTotal.toLocaleString('en-IN')}
+                  <div className="bg-white p-4 md:p-6 rounded-2xl border border-neutral-100 shadow-xs space-y-2 text-left">
+                    <span className="text-[9px] md:text-[10px] font-black uppercase text-neutral-400 tracking-widest block leading-tight">E-Com Tax (GST)</span>
+                    <h3 className="text-lg md:text-2xl font-black text-indigo-950">₹{ecomGstTotal.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</h3>
+                    <p className="text-[9px] md:text-[10px] text-neutral-400">Collected on online sales</p>
+                  </div>
+                </div>
+
+                {/* E-Com Pipeline & Category Breakdown */}
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                  {/* Web Fulfillment Pipeline */}
+                  <div className="bg-white p-6 rounded-2xl border border-neutral-100 shadow-sm space-y-4 text-left">
+                    <h4 className="text-xs font-black uppercase text-neutral-900 tracking-wider">Web Order Fulfillment Pipeline</h4>
+                    <div className="space-y-3">
+                      <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl flex justify-between items-center">
+                        <div>
+                          <span className="text-xs font-bold text-amber-900 block">Payment Verification Pending</span>
+                          <span className="text-[9px] text-amber-700">Awaiting owner screenshot review</span>
                         </div>
-                        {/* Interactive Bar */}
-                        <div 
-                          style={{ height: `${percentHeight}%` }}
-                          className="w-8 bg-gradient-to-t from-orange-600 to-orange-400 hover:from-neutral-900 hover:to-neutral-950 rounded-t-md transition-all duration-500 shadow-md flex items-end justify-center"
-                        ></div>
-                        <span className="text-[9px] font-black text-neutral-400 uppercase tracking-tight truncate w-full text-center">
-                          {cat}
+                        <span className="text-lg font-black text-amber-900">{pendingVerificationOrders.length}</span>
+                      </div>
+
+                      <div className="p-3 bg-blue-50 border border-blue-200 rounded-xl flex justify-between items-center">
+                        <div>
+                          <span className="text-xs font-bold text-blue-900 block">Confirmed & Packing</span>
+                          <span className="text-[9px] text-blue-700">Ready for courier dispatch</span>
+                        </div>
+                        <span className="text-lg font-black text-blue-900">
+                          {allOrders.filter(o => o.status === 'Confirmed' || o.status === 'Packed').length}
                         </span>
                       </div>
-                    );
-                  })}
+
+                      <div className="p-3 bg-indigo-50 border border-indigo-200 rounded-xl flex justify-between items-center">
+                        <div>
+                          <span className="text-xs font-bold text-indigo-900 block">In Transit / Shipped</span>
+                          <span className="text-[9px] text-indigo-700">Handed to shipping partner</span>
+                        </div>
+                        <span className="text-lg font-black text-indigo-900">
+                          {allOrders.filter(o => o.status === 'Shipped').length}
+                        </span>
+                      </div>
+
+                      <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl flex justify-between items-center">
+                        <div>
+                          <span className="text-xs font-bold text-emerald-900 block">Successfully Delivered</span>
+                          <span className="text-[9px] text-emerald-700">Customer received package</span>
+                        </div>
+                        <span className="text-lg font-black text-emerald-900">{completedOrdersCount}</span>
+                      </div>
+                    </div>
+
+                    <div className="pt-2 border-t flex justify-between text-xs font-bold text-neutral-600">
+                      <span>Delivery Freight Earnings:</span>
+                      <span className="text-neutral-900 font-mono">₹{ecomDeliveryCharges.toLocaleString('en-IN')}</span>
+                    </div>
+                  </div>
+
+                  {/* E-Commerce Category Chart */}
+                  <div className="bg-white p-6 rounded-2xl border border-neutral-100 shadow-sm lg:col-span-2 space-y-4 text-left">
+                    <h4 className="text-xs font-black uppercase text-neutral-900 tracking-wider">Digital E-Commerce Category Revenue</h4>
+                    <p className="text-[10px] text-neutral-400">Revenue contribution per garment category from web orders.</p>
+                    
+                    <div className="relative h-56 w-full flex items-end justify-between pt-6 px-4 border-b border-neutral-100 bg-neutral-50 rounded-xl">
+                      {['Shirts', 'T-Shirts', 'Jeans', 'Trousers', 'Jackets', 'Accessories'].map((cat) => {
+                        const catTotal = validOnlineOrders
+                          .flatMap(o => o.items)
+                          .filter(item => {
+                            const prod = allProducts.find(p => p.id === item.productId);
+                            return prod ? prod.category === cat : false;
+                          })
+                          .reduce((sum, item) => sum + (item.price * item.quantity), 0);
+
+                        const height = Math.min(100, Math.max(8, (catTotal / Math.max(1, ecomRevenue)) * 100));
+
+                        return (
+                          <div key={cat} className="flex flex-col items-center gap-2 z-10 w-12 group">
+                            <div className="opacity-0 group-hover:opacity-100 transition-opacity absolute mb-20 bg-indigo-950 text-white text-[10px] font-black py-1 px-2.5 rounded shadow-xl -translate-y-4">
+                              ₹{catTotal.toLocaleString('en-IN')}
+                            </div>
+                            <div 
+                              style={{ height: `${height}%` }}
+                              className="w-8 bg-gradient-to-t from-indigo-700 to-indigo-500 hover:from-neutral-900 hover:to-neutral-950 rounded-t-md transition-all duration-500 shadow-md"
+                            ></div>
+                            <span className="text-[9px] font-black text-neutral-400 uppercase tracking-tight truncate w-full text-center">
+                              {cat}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
                 </div>
               </div>
+            )}
 
-              {/* Low Stock Alerts & Fast Replenish Panel */}
-              <div className="bg-white p-6 rounded-2xl border border-neutral-100 shadow-sm space-y-4 flex flex-col">
-                <div>
-                  <h3 className="text-base font-black text-neutral-950 uppercase tracking-tight flex items-center gap-1.5">
-                    <AlertTriangle className="text-red-500 w-4 h-4" />
-                    Low Stock Alerts
-                  </h3>
-                  <p className="text-xs text-neutral-400">Immediate garment restocking list</p>
+            {/* CHANNEL VIEW 2: RETAIL OUTLET POS ONLY */}
+            {analyticsChannel === 'RETAIL_POS' && (
+              <div className="space-y-8 animate-fadeIn">
+                <div className="bg-orange-950 text-white p-4 rounded-2xl border border-orange-800 flex items-center justify-between">
+                  <div className="flex items-center gap-3 text-left">
+                    <Store className="w-6 h-6 text-orange-400" />
+                    <div>
+                      <h3 className="text-sm font-black uppercase tracking-wider">Retail Outlet POS Sales & Analytics</h3>
+                      <p className="text-[10px] text-orange-200">In-person cashier counter checkout billing transactions on showroom floor.</p>
+                    </div>
+                  </div>
+                  <span className="bg-orange-800/80 text-orange-200 text-[10px] font-mono px-3 py-1 rounded-full uppercase font-bold border border-orange-700">
+                    Storefront Channel ID: POS_SHOWROOM
+                  </span>
                 </div>
 
-                <div className="flex-grow overflow-y-auto space-y-3 max-h-64 pr-1 scrollbar-none">
-                  {lowStockProducts.length === 0 ? (
-                    <div className="text-center py-12 text-neutral-400 text-xs font-semibold">
-                      ✓ All products have healthy stock levels.
-                    </div>
-                  ) : (
-                    lowStockProducts.map((p) => (
-                      <div key={p.id} className="p-3 bg-red-50/50 border border-red-100 rounded-xl flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                          <img src={p.images[0]} className="w-10 h-12 object-cover rounded" />
-                          <div className="text-left">
-                            <span className="font-bold text-xs text-neutral-900 line-clamp-1">{p.name}</span>
-                            <span className="text-[10px] text-neutral-400 uppercase font-bold">{p.category} • Size {p.sizes.join(', ')}</span>
+                {/* POS KPI Grid */}
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-6">
+                  <div className="bg-white p-4 md:p-6 rounded-2xl border border-neutral-100 shadow-xs space-y-2 text-left">
+                    <span className="text-[9px] md:text-[10px] font-black uppercase text-neutral-400 tracking-widest block leading-tight">POS Showroom Sales</span>
+                    <h3 className="text-lg md:text-2xl font-black text-orange-950">₹{posRevenue.toLocaleString('en-IN')}</h3>
+                    <p className="text-[9px] md:text-[10px] text-neutral-400">Cashier desk settled bills</p>
+                  </div>
+
+                  <div className="bg-white p-4 md:p-6 rounded-2xl border border-neutral-100 shadow-xs space-y-2 text-left">
+                    <span className="text-[9px] md:text-[10px] font-black uppercase text-neutral-400 tracking-widest block leading-tight">Invoices / Bills Count</span>
+                    <h3 className="text-lg md:text-2xl font-black text-orange-950">{posCount} Bills</h3>
+                    <p className="text-[9px] md:text-[10px] text-neutral-400">Printed GST receipts</p>
+                  </div>
+
+                  <div className="bg-white p-4 md:p-6 rounded-2xl border border-neutral-100 shadow-xs space-y-2 text-left">
+                    <span className="text-[9px] md:text-[10px] font-black uppercase text-neutral-400 tracking-widest block leading-tight">Avg Transaction Value</span>
+                    <h3 className="text-lg md:text-2xl font-black text-orange-950">₹{posAtv.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</h3>
+                    <p className="text-[9px] md:text-[10px] text-neutral-400">Per walk-in basket average</p>
+                  </div>
+
+                  <div className="bg-white p-4 md:p-6 rounded-2xl border border-neutral-100 shadow-xs space-y-2 text-left">
+                    <span className="text-[9px] md:text-[10px] font-black uppercase text-neutral-400 tracking-widest block leading-tight">POS Tax (CGST + SGST)</span>
+                    <h3 className="text-lg md:text-2xl font-black text-orange-950">₹{posGstTotal.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</h3>
+                    <p className="text-[9px] md:text-[10px] text-neutral-400">Collected on store sales</p>
+                  </div>
+                </div>
+
+                {/* POS Payment Breakdown & Cashier Leaderboard */}
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                  {/* Payment Mode Distribution */}
+                  <div className="bg-white p-6 rounded-2xl border border-neutral-100 shadow-sm space-y-4 text-left">
+                    <h4 className="text-xs font-black uppercase text-neutral-900 tracking-wider">POS Payment Method Split</h4>
+                    <div className="space-y-3">
+                      <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl flex justify-between items-center">
+                        <div className="flex items-center gap-2">
+                          <Banknote className="w-4 h-4 text-emerald-700" />
+                          <div>
+                            <span className="text-xs font-bold text-emerald-950 block">Cash Payments</span>
+                            <span className="text-[9px] text-emerald-700">{posCashCount} transactions</span>
                           </div>
                         </div>
-                        <div className="text-right">
-                          <span className="text-xs font-black text-red-600 block">{p.stock} units left</span>
-                          <button
-                            onClick={() => handleStartEdit(p)}
-                            className="text-[10px] text-orange-500 font-extrabold hover:underline"
-                          >
-                            Update
-                          </button>
-                        </div>
+                        <span className="text-sm font-black text-emerald-950">₹{posCashTotal.toLocaleString('en-IN')}</span>
                       </div>
-                    ))
-                  )}
+
+                      <div className="p-3 bg-blue-50 border border-blue-200 rounded-xl flex justify-between items-center">
+                        <div className="flex items-center gap-2">
+                          <Smartphone className="w-4 h-4 text-blue-700" />
+                          <div>
+                            <span className="text-xs font-bold text-blue-950 block">UPI QR Payments</span>
+                            <span className="text-[9px] text-blue-700">{posUpiCount} transactions</span>
+                          </div>
+                        </div>
+                        <span className="text-sm font-black text-blue-950">₹{posUpiTotal.toLocaleString('en-IN')}</span>
+                      </div>
+
+                      <div className="p-3 bg-indigo-50 border border-indigo-200 rounded-xl flex justify-between items-center">
+                        <div className="flex items-center gap-2">
+                          <CreditCard className="w-4 h-4 text-indigo-700" />
+                          <div>
+                            <span className="text-xs font-bold text-indigo-950 block">Card Swipes</span>
+                            <span className="text-[9px] text-indigo-700">{posCardCount} transactions</span>
+                          </div>
+                        </div>
+                        <span className="text-sm font-black text-indigo-950">₹{posCardTotal.toLocaleString('en-IN')}</span>
+                      </div>
+
+                      <div className="p-3 bg-purple-50 border border-purple-200 rounded-xl flex justify-between items-center">
+                        <div className="flex items-center gap-2">
+                          <Receipt className="w-4 h-4 text-purple-700" />
+                          <div>
+                            <span className="text-xs font-bold text-purple-950 block">Split Mode Payments</span>
+                            <span className="text-[9px] text-purple-700">{posSplitCount} transactions</span>
+                          </div>
+                        </div>
+                        <span className="text-sm font-black text-purple-950">₹{posSplitTotal.toLocaleString('en-IN')}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Cashier Performance Leaderboard */}
+                  <div className="bg-white p-6 rounded-2xl border border-neutral-100 shadow-sm space-y-4 text-left">
+                    <h4 className="text-xs font-black uppercase text-neutral-900 tracking-wider">Cashier Counter Performance</h4>
+                    <p className="text-[10px] text-neutral-400">Total revenue processed by terminal cashiers.</p>
+                    
+                    <div className="space-y-3 max-h-64 overflow-y-auto">
+                      {cashierList.length === 0 ? (
+                        <div className="text-center py-8 text-neutral-400 text-xs">No cashier transactions logged yet.</div>
+                      ) : (
+                        cashierList.map((c, idx) => (
+                          <div key={c.name} className="p-3 bg-neutral-50 rounded-xl border border-neutral-200 flex justify-between items-center">
+                            <div className="flex items-center gap-2.5">
+                              <span className="w-6 h-6 rounded-full bg-orange-100 text-orange-800 text-[10px] font-black flex items-center justify-center">
+                                #{idx + 1}
+                              </span>
+                              <div>
+                                <span className="text-xs font-bold text-neutral-900 block">{c.name}</span>
+                                <span className="text-[9px] text-neutral-400">{c.count} bills generated</span>
+                              </div>
+                            </div>
+                            <span className="text-sm font-black text-neutral-900">₹{c.total.toLocaleString('en-IN')}</span>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+
+                  {/* POS Category Chart */}
+                  <div className="bg-white p-6 rounded-2xl border border-neutral-100 shadow-sm space-y-4 text-left">
+                    <h4 className="text-xs font-black uppercase text-neutral-900 tracking-wider">In-Store Walk-In Category Revenue</h4>
+                    <p className="text-[10px] text-neutral-400">Walk-in customer sales per garment category.</p>
+                    
+                    <div className="relative h-48 w-full flex items-end justify-between pt-6 px-2 border-b border-neutral-100 bg-neutral-50 rounded-xl">
+                      {['Shirts', 'T-Shirts', 'Jeans', 'Trousers', 'Jackets', 'Accessories'].map((cat) => {
+                        const catTotal = validPosSales
+                          .flatMap(s => s.items)
+                          .filter(item => {
+                            const prod = allProducts.find(p => p.id === item.productId);
+                            return prod ? prod.category === cat : item.productName.toLowerCase().includes(cat.toLowerCase());
+                          })
+                          .reduce((sum, item) => sum + item.totalAmount, 0);
+
+                        const height = Math.min(100, Math.max(8, (catTotal / Math.max(1, posRevenue)) * 100));
+
+                        return (
+                          <div key={cat} className="flex flex-col items-center gap-2 z-10 w-10 group">
+                            <div className="opacity-0 group-hover:opacity-100 transition-opacity absolute mb-16 bg-orange-950 text-white text-[10px] font-black py-1 px-2 rounded shadow-xl -translate-y-4">
+                              ₹{catTotal.toLocaleString('en-IN')}
+                            </div>
+                            <div 
+                              style={{ height: `${height}%` }}
+                              className="w-6 bg-gradient-to-t from-orange-600 to-orange-400 hover:from-neutral-900 hover:to-neutral-950 rounded-t-md transition-all duration-500 shadow-md"
+                            ></div>
+                            <span className="text-[8px] font-black text-neutral-400 uppercase tracking-tight truncate w-full text-center">
+                              {cat}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
                 </div>
               </div>
+            )}
 
-            </div>
+            {/* CHANNEL VIEW 3: COMBINED OMNICHANNEL OVERVIEW */}
+            {analyticsChannel === 'COMBINED' && (
+              <div className="space-y-8 animate-fadeIn">
+                {/* Bento statistics grid */}
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-6">
+                  
+                  <div className="bg-white p-4 md:p-6 rounded-2xl border border-neutral-100 shadow-xs space-y-2 md:space-y-4 text-left">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[9px] md:text-[10px] font-black uppercase text-neutral-400 tracking-widest leading-tight">Combined Gross Revenue</span>
+                      <div className="p-1.5 md:p-2.5 bg-emerald-50 text-emerald-600 rounded-xl shrink-0">
+                        <TrendingUp className="w-4 h-4 md:w-5 md:h-5" />
+                      </div>
+                    </div>
+                    <div>
+                      <h3 className="text-lg md:text-2xl font-black text-neutral-950">₹{combinedRevenue.toLocaleString('en-IN')}</h3>
+                      <p className="text-[9px] md:text-[10px] text-neutral-400 mt-0.5 md:mt-1">E-Com (₹{ecomRevenue.toLocaleString('en-IN')}) + POS (₹{posRevenue.toLocaleString('en-IN')})</p>
+                    </div>
+                  </div>
+
+                  <div className="bg-white p-4 md:p-6 rounded-2xl border border-neutral-100 shadow-xs space-y-2 md:space-y-4 text-left">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[9px] md:text-[10px] font-black uppercase text-neutral-400 tracking-widest leading-tight">Digital E-Com Share</span>
+                      <div className="p-1.5 md:p-2.5 bg-indigo-50 text-indigo-600 rounded-xl shrink-0">
+                        <Globe className="w-4 h-4 md:w-5 md:h-5" />
+                      </div>
+                    </div>
+                    <div>
+                      <h3 className="text-lg md:text-2xl font-black text-indigo-950">₹{ecomRevenue.toLocaleString('en-IN')}</h3>
+                      <p className="text-[9px] md:text-[10px] text-indigo-600 font-bold mt-0.5 md:mt-1">{ecomSharePct}% of total ({ecomCount} orders)</p>
+                    </div>
+                  </div>
+
+                  <div className="bg-white p-4 md:p-6 rounded-2xl border border-neutral-100 shadow-xs space-y-2 md:space-y-4 text-left">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[9px] md:text-[10px] font-black uppercase text-neutral-400 tracking-widest leading-tight">Retail POS Share</span>
+                      <div className="p-1.5 md:p-2.5 bg-orange-50 text-orange-500 rounded-xl shrink-0">
+                        <Store className="w-4 h-4 md:w-5 md:h-5" />
+                      </div>
+                    </div>
+                    <div>
+                      <h3 className="text-lg md:text-2xl font-black text-orange-950">₹{posRevenue.toLocaleString('en-IN')}</h3>
+                      <p className="text-[9px] md:text-[10px] text-orange-600 font-bold mt-0.5 md:mt-1">{posSharePct}% of total ({posCount} bills)</p>
+                    </div>
+                  </div>
+
+                  <div className="bg-white p-4 md:p-6 rounded-2xl border border-neutral-100 shadow-xs space-y-2 md:space-y-4 text-left">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[9px] md:text-[10px] font-black uppercase text-neutral-400 tracking-widest leading-tight">Low Stock Alerts</span>
+                      <div className={`p-1.5 md:p-2.5 rounded-xl shrink-0 ${lowStockProducts.length > 0 ? 'bg-red-50 text-red-600 animate-pulse' : 'bg-neutral-50 text-neutral-400'}`}>
+                        <AlertTriangle className="w-4 h-4 md:w-5 md:h-5" />
+                      </div>
+                    </div>
+                    <div>
+                      <h3 className="text-lg md:text-2xl font-black text-neutral-950">{lowStockProducts.length} Items</h3>
+                      <p className="text-[9px] md:text-[10px] text-neutral-400 mt-0.5 md:mt-1">Under 5 stock remaining</p>
+                    </div>
+                  </div>
+
+                </div>
+
+                {/* Channel Share Percentage Visual Bar */}
+                <div className="bg-white p-6 rounded-2xl border border-neutral-100 shadow-sm space-y-3 text-left">
+                  <div className="flex justify-between items-center text-xs font-black uppercase">
+                    <span className="text-indigo-700 flex items-center gap-1.5"><Globe className="w-3.5 h-3.5" /> Digital E-Commerce ({ecomSharePct}%)</span>
+                    <span className="text-orange-700 flex items-center gap-1.5"><Store className="w-3.5 h-3.5" /> Retail Outlet POS ({posSharePct}%)</span>
+                  </div>
+                  <div className="w-full h-4 bg-neutral-100 rounded-full overflow-hidden flex p-0.5 border">
+                    <div style={{ width: `${ecomSharePct}%` }} className="bg-indigo-600 h-full rounded-l-full transition-all duration-500"></div>
+                    <div style={{ width: `${posSharePct}%` }} className="bg-orange-500 h-full rounded-r-full transition-all duration-500"></div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                  {/* Dual Channel Category Comparison Bar Chart */}
+                  <div className="bg-white p-6 rounded-2xl border border-neutral-100 shadow-sm lg:col-span-2 space-y-6 text-left">
+                    <div className="flex justify-between items-center">
+                      <div>
+                        <h3 className="text-base font-black text-neutral-950 uppercase tracking-tight">Category Sales: E-Com vs POS Comparison</h3>
+                        <p className="text-xs text-neutral-400">Garment revenue generated online vs in-store side-by-side</p>
+                      </div>
+                      <div className="flex items-center gap-3 text-[10px] font-black uppercase">
+                        <span className="flex items-center gap-1 text-indigo-700"><span className="w-2.5 h-2.5 bg-indigo-600 rounded-full"></span> E-Com</span>
+                        <span className="flex items-center gap-1 text-orange-700"><span className="w-2.5 h-2.5 bg-orange-500 rounded-full"></span> Retail POS</span>
+                      </div>
+                    </div>
+
+                    <div className="relative h-64 w-full flex items-end justify-between pt-6 px-4 border-b border-neutral-100 bg-neutral-50 rounded-xl">
+                      {['Shirts', 'T-Shirts', 'Jeans', 'Trousers', 'Jackets', 'Accessories'].map((cat) => {
+                        const ecomCatTotal = validOnlineOrders
+                          .flatMap(o => o.items)
+                          .filter(item => {
+                            const prod = allProducts.find(p => p.id === item.productId);
+                            return prod ? prod.category === cat : false;
+                          })
+                          .reduce((sum, item) => sum + (item.price * item.quantity), 0);
+
+                        const posCatTotal = validPosSales
+                          .flatMap(s => s.items)
+                          .filter(item => {
+                            const prod = allProducts.find(p => p.id === item.productId);
+                            return prod ? prod.category === cat : item.productName.toLowerCase().includes(cat.toLowerCase());
+                          })
+                          .reduce((sum, item) => sum + item.totalAmount, 0);
+
+                        const maxScale = Math.max(1, combinedRevenue / 3);
+                        const ecomH = Math.min(100, Math.max(6, (ecomCatTotal / maxScale) * 100));
+                        const posH = Math.min(100, Math.max(6, (posCatTotal / maxScale) * 100));
+
+                        return (
+                          <div key={cat} className="flex flex-col items-center gap-2 z-10 group">
+                            <div className="flex items-end gap-1">
+                              <div 
+                                style={{ height: `${ecomH}%` }}
+                                className="w-4 bg-indigo-600 hover:bg-indigo-800 rounded-t transition-all shadow-xs"
+                                title={`E-Com: ₹${ecomCatTotal.toLocaleString('en-IN')}`}
+                              ></div>
+                              <div 
+                                style={{ height: `${posH}%` }}
+                                className="w-4 bg-orange-500 hover:bg-orange-700 rounded-t transition-all shadow-xs"
+                                title={`POS: ₹${posCatTotal.toLocaleString('en-IN')}`}
+                              ></div>
+                            </div>
+                            <span className="text-[9px] font-black text-neutral-400 uppercase tracking-tight truncate max-w-[60px] text-center">
+                              {cat}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Low Stock Alerts & Fast Replenish Panel */}
+                  <div className="bg-white p-6 rounded-2xl border border-neutral-100 shadow-sm space-y-4 flex flex-col text-left">
+                    <div>
+                      <h3 className="text-base font-black text-neutral-950 uppercase tracking-tight flex items-center gap-1.5">
+                        <AlertTriangle className="text-red-500 w-4 h-4" />
+                        Low Stock Alerts
+                      </h3>
+                      <p className="text-xs text-neutral-400">Garment inventory replenishment needed</p>
+                    </div>
+
+                    <div className="flex-grow overflow-y-auto space-y-3 max-h-64 pr-1 scrollbar-none">
+                      {lowStockProducts.length === 0 ? (
+                        <div className="text-center py-12 text-neutral-400 text-xs font-semibold">
+                          ✓ All products have healthy stock levels.
+                        </div>
+                      ) : (
+                        lowStockProducts.map((p) => (
+                          <div key={p.id} className="p-3 bg-red-50/50 border border-red-100 rounded-xl flex items-center justify-between">
+                            <div className="flex items-center gap-3">
+                              <img src={p.images[0]} className="w-10 h-12 object-cover rounded" referrerPolicy="no-referrer" />
+                              <div className="text-left">
+                                <span className="font-bold text-xs text-neutral-900 line-clamp-1">{p.name}</span>
+                                <span className="text-[10px] text-neutral-400 uppercase font-bold">{p.category} • Size {p.sizes.join(', ')}</span>
+                              </div>
+                            </div>
+                            <div className="text-right">
+                              <span className="text-xs font-black text-red-600 block">{p.stock} units left</span>
+                              <button
+                                onClick={() => handleStartEdit(p)}
+                                className="text-[10px] text-orange-500 font-extrabold hover:underline"
+                              >
+                                Update
+                              </button>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+
+                </div>
+              </div>
+            )}
+
           </div>
         )}
 
@@ -735,6 +1412,32 @@ export default function AdminPanel({
                         placeholder="e.g. Classic Mandarin Collar Cotton Shirt"
                         className="w-full p-2.5 border border-neutral-200 rounded-lg text-xs"
                       />
+                    </div>
+
+                    <div className="sm:col-span-2">
+                      <div className="flex justify-between items-center mb-1">
+                        <label className="block text-[10px] font-black uppercase text-orange-600">
+                          Unique SKU ID (Stock Keeping Unit) *
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => setProductSku(generateUniqueSku(productCategory, productName))}
+                          className="text-[9px] font-bold text-orange-700 hover:text-orange-800 bg-orange-50 hover:bg-orange-100 px-2.5 py-0.5 rounded border border-orange-200 transition-all flex items-center gap-1 cursor-pointer"
+                        >
+                          <Sparkles className="w-3 h-3 text-orange-500" /> Auto-Generate SKU
+                        </button>
+                      </div>
+                      <input
+                        type="text"
+                        required
+                        value={productSku}
+                        onChange={(e) => setProductSku(e.target.value.toUpperCase())}
+                        placeholder="e.g. RNG-SHI-8923"
+                        className="w-full p-2.5 border border-orange-200 focus:border-orange-500 focus:ring-1 focus:ring-orange-500 rounded-lg text-xs font-mono font-bold tracking-wider text-neutral-900 bg-orange-50/20 uppercase"
+                      />
+                      <p className="text-[9px] text-neutral-400 mt-1">
+                        Unique identifier used by cashiers to instantly search and scan items in POS Billing.
+                      </p>
                     </div>
 
                     <div>
@@ -808,6 +1511,21 @@ export default function AdminPanel({
                         onChange={(e) => setProductOfferPrice(Number(e.target.value))}
                         className="w-full p-2.5 border border-neutral-200 rounded-lg text-xs"
                       />
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] font-black uppercase text-neutral-400 mb-1">GST Tax Rate % *</label>
+                      <select
+                        value={productGstPercent}
+                        onChange={(e) => setProductGstPercent(Number(e.target.value))}
+                        className="w-full p-2.5 border border-neutral-200 bg-white rounded-lg text-xs font-bold"
+                      >
+                        <option value={0}>0% (Exempt)</option>
+                        <option value={5}>5% (Standard Apparel &lt; ₹1000)</option>
+                        <option value={12}>12% (Apparel &gt; ₹1000 / Textiles)</option>
+                        <option value={18}>18% (Luxury / Accessories)</option>
+                        <option value={28}>28% (Special Goods)</option>
+                      </select>
                     </div>
 
                   </div>
@@ -935,66 +1653,91 @@ export default function AdminPanel({
                     <tr className="bg-neutral-950 text-white text-[10px] font-black uppercase tracking-widest border-b border-neutral-100">
                       <th className="p-4 pl-6">Garment Item</th>
                       <th className="p-4">Category</th>
-                      <th className="p-4">Price (Offer)</th>
+                      <th className="p-4">Price (MRP / Offer)</th>
+                      <th className="p-4">GST Rate %</th>
                       <th className="p-4">Stock</th>
                       <th className="p-4">Collections</th>
                       <th className="p-4 text-right pr-6">Catalog Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-neutral-100 text-xs text-neutral-700">
-                    {filteredProducts.map((p) => (
-                      <tr key={p.id} className="hover:bg-neutral-50/50 transition-colors">
-                        <td className="p-4 pl-6 flex items-center gap-3.5">
-                          <img src={p.images[0]} className="w-10 h-13 object-cover rounded-lg bg-neutral-100 border border-neutral-200" />
-                          <div>
-                            <span className="font-extrabold text-neutral-900 block">{p.name}</span>
-                            <span className="text-[10px] text-neutral-400 block uppercase font-bold">{p.brand}</span>
-                          </div>
-                        </td>
-                        <td className="p-4">
-                          <span className="bg-neutral-100 px-2.5 py-1 rounded-full font-bold text-[10px]">
-                            {p.category}
-                          </span>
-                        </td>
-                        <td className="p-4 font-bold">
-                          <span className="text-neutral-900">₹{p.offerPrice}</span>
-                          {p.price > p.offerPrice && (
-                            <span className="text-[10px] text-neutral-400 line-through block font-medium">₹{p.price}</span>
-                          )}
-                        </td>
-                        <td className="p-4">
-                          <span className={`font-black text-xs ${p.stock <= 5 ? 'text-red-600' : 'text-neutral-900'}`}>
-                            {p.stock} units
-                          </span>
-                        </td>
-                        <td className="p-4 space-y-1">
-                          {p.isTrending && <span className="inline-block bg-orange-100 text-orange-800 text-[8px] font-black px-1.5 py-0.5 rounded mr-1 uppercase">Trending</span>}
-                          {p.isBestSeller && <span className="inline-block bg-emerald-100 text-emerald-800 text-[8px] font-black px-1.5 py-0.5 rounded mr-1 uppercase">Bestseller</span>}
-                          {p.isNewArrival && <span className="inline-block bg-blue-100 text-blue-800 text-[8px] font-black px-1.5 py-0.5 rounded mr-1 uppercase">New</span>}
-                        </td>
-                        <td className="p-4 text-right pr-6">
-                          <div className="flex justify-end gap-2.5">
-                            <button
-                              onClick={() => {
-                                handleStartEdit(p);
-                                document.getElementById('product-form-anchor')?.scrollIntoView({ behavior: 'smooth' });
-                              }}
-                              className="p-2 text-neutral-500 hover:text-orange-500 hover:bg-orange-50 rounded-lg transition-colors"
-                              title="Edit product parameters"
+                    {filteredProducts.map((p) => {
+                      const currentGst = p.gstPercent !== undefined ? p.gstPercent : 5;
+                      const taxable = p.offerPrice / (1 + (currentGst / 100));
+
+                      return (
+                        <tr key={p.id} className="hover:bg-neutral-50/50 transition-colors">
+                          <td className="p-4 pl-6 flex items-center gap-3.5">
+                            <img src={p.images[0]} className="w-10 h-13 object-cover rounded-lg bg-neutral-100 border border-neutral-200" referrerPolicy="no-referrer" />
+                            <div>
+                              <span className="font-extrabold text-neutral-900 block">{p.name}</span>
+                              <div className="flex flex-wrap items-center gap-2 mt-0.5">
+                                <span className="text-[10px] text-neutral-400 uppercase font-bold">{p.brand}</span>
+                                <span className="font-mono bg-orange-100 text-orange-900 text-[9px] font-black px-1.5 py-0.5 rounded border border-orange-200 uppercase">
+                                  SKU: {p.sku || 'N/A'}
+                                </span>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="p-4">
+                            <span className="bg-neutral-100 px-2.5 py-1 rounded-full font-bold text-[10px]">
+                              {p.category}
+                            </span>
+                          </td>
+                          <td className="p-4 font-bold">
+                            <div className="space-y-1">
+                              <span className="text-neutral-900 block">Offer: ₹{p.offerPrice}</span>
+                              <span className="text-[10px] text-neutral-400 block font-medium">MRP: ₹{p.price}</span>
+                              <span className="text-[9px] text-orange-600 block font-bold">Taxable: ₹{taxable.toFixed(2)}</span>
+                            </div>
+                          </td>
+                          <td className="p-4">
+                            <select
+                              value={currentGst}
+                              onChange={(e) => handleQuickUpdateGstAndPrice(p, p.price, p.offerPrice, Number(e.target.value))}
+                              className="bg-orange-50 border border-orange-200 text-orange-700 font-extrabold px-2 py-1 rounded text-xs cursor-pointer focus:outline-none focus:ring-1 focus:ring-orange-400"
                             >
-                              <Edit2 className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              onClick={() => handleDeleteProduct(p)}
-                              className="p-2 text-neutral-500 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
-                              title="Delete from catalogue"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
+                              <option value={0}>0% (Exempt)</option>
+                              <option value={5}>5% GST</option>
+                              <option value={12}>12% GST</option>
+                              <option value={18}>18% GST</option>
+                              <option value={28}>28% GST</option>
+                            </select>
+                          </td>
+                          <td className="p-4">
+                            <span className={`font-black text-xs ${p.stock <= 5 ? 'text-red-600' : 'text-neutral-900'}`}>
+                              {p.stock} units
+                            </span>
+                          </td>
+                          <td className="p-4 space-y-1">
+                            {p.isTrending && <span className="inline-block bg-orange-100 text-orange-800 text-[8px] font-black px-1.5 py-0.5 rounded mr-1 uppercase">Trending</span>}
+                            {p.isBestSeller && <span className="inline-block bg-emerald-100 text-emerald-800 text-[8px] font-black px-1.5 py-0.5 rounded mr-1 uppercase">Bestseller</span>}
+                            {p.isNewArrival && <span className="inline-block bg-blue-100 text-blue-800 text-[8px] font-black px-1.5 py-0.5 rounded mr-1 uppercase">New</span>}
+                          </td>
+                          <td className="p-4 text-right pr-6">
+                            <div className="flex justify-end gap-2.5">
+                              <button
+                                onClick={() => {
+                                  handleStartEdit(p);
+                                  document.getElementById('product-form-anchor')?.scrollIntoView({ behavior: 'smooth' });
+                                }}
+                                className="p-2 text-neutral-500 hover:text-orange-500 hover:bg-orange-50 rounded-lg transition-colors"
+                                title="Edit product parameters & GST"
+                              >
+                                <Edit2 className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => handleDeleteProduct(p)}
+                                className="p-2 text-neutral-500 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                                title="Delete from catalogue"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -1492,6 +2235,59 @@ export default function AdminPanel({
               </button>
             </form>
           </div>
+        )}
+
+        {/* TAB 7: POS BILLING SCREEN */}
+        {activeTab === 'pos-billing' && (
+          <POSBilling 
+            products={allProducts} 
+            coupons={allCoupons} 
+            currentUser={currentEmployee ? { uid: currentEmployee.id, displayName: currentEmployee.name, email: currentEmployee.email } : null}
+            onRefreshData={onRefreshData}
+            businessSettings={businessProfile}
+          />
+        )}
+
+        {/* TAB 8: CENTRAL INVENTORY LEDGER */}
+        {activeTab === 'pos-inventory' && (
+          <InventoryManager 
+            products={allProducts} 
+            onRefreshData={onRefreshData} 
+            triggerGlobalAlert={(type, text) => triggerAlert(type, text)}
+          />
+        )}
+
+        {/* TAB 10: BULK PURCHASES */}
+        {activeTab === 'pos-purchases' && (
+          <PurchasesManager 
+            products={allProducts} 
+            onRefreshData={onRefreshData} 
+            triggerGlobalAlert={(type, text) => triggerAlert(type, text)}
+          />
+        )}
+
+        {/* TAB 11: LOYALTY & WALLET */}
+        {activeTab === 'pos-customers' && (
+          <CustomersLoyalty 
+            onRefreshData={onRefreshData} 
+            triggerGlobalAlert={(type, text) => triggerAlert(type, text)}
+          />
+        )}
+
+        {/* TAB 13: PROFIT & LOSS / GST TAX ANALYTICS */}
+        {activeTab === 'pos-reports' && (
+          <POSReports 
+            products={allProducts} 
+            allOnlineOrders={allOrders}
+          />
+        )}
+
+        {/* TAB 14: CORPORATE SHOWROOM SETTINGS */}
+        {activeTab === 'pos-settings' && (
+          <SettingsManager 
+            onRefreshData={onRefreshData} 
+            triggerGlobalAlert={(type, text) => triggerAlert(type, text)}
+          />
         )}
 
       </div>

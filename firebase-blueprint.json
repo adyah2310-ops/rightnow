@@ -92,6 +92,148 @@
         "eligibleLocations": { "type": "array" }
       },
       "required": ["expressEnabled", "expressCharge", "normalCharge", "freeDeliveryThreshold", "eligibleLocations"]
+    },
+    "Supplier": {
+      "title": "Supplier",
+      "description": "Store raw garment and product suppliers",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "companyName": { "type": "string" },
+        "gstin": { "type": "string" },
+        "phone": { "type": "string" },
+        "email": { "type": "string" },
+        "address": { "type": "string" },
+        "balance": { "type": "number" },
+        "createdDate": { "type": "string" }
+      },
+      "required": ["id", "name", "companyName", "phone", "balance", "createdDate"]
+    },
+    "PurchaseRecord": {
+      "title": "PurchaseRecord",
+      "description": "Inventory replenishment records from suppliers",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "billNumber": { "type": "string" },
+        "supplierId": { "type": "string" },
+        "supplierName": { "type": "string" },
+        "items": { "type": "array" },
+        "taxableTotal": { "type": "number" },
+        "gstTotal": { "type": "number" },
+        "grandTotal": { "type": "number" },
+        "paymentMode": { "type": "string" },
+        "status": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "billNumber", "supplierId", "supplierName", "items", "grandTotal", "paymentMode", "status", "createdAt"]
+    },
+    "POSSale": {
+      "title": "POSSale",
+      "description": "In-store cashier transactions with detailed GST calculation",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "invoiceNumber": { "type": "string" },
+        "customerId": { "type": "string" },
+        "customerName": { "type": "string" },
+        "customerPhone": { "type": "string" },
+        "customerAddress": { "type": "string" },
+        "customerGst": { "type": "string" },
+        "items": { "type": "array" },
+        "subTotal": { "type": "number" },
+        "taxTotal": { "type": "number" },
+        "discountAmount": { "type": "number" },
+        "couponCode": { "type": "string" },
+        "shippingCharge": { "type": "number" },
+        "packingCharge": { "type": "number" },
+        "roundOff": { "type": "number" },
+        "grandTotal": { "type": "number" },
+        "paymentMode": { "type": "string" },
+        "cashierId": { "type": "string" },
+        "cashierName": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "status": { "type": "string" }
+      },
+      "required": ["id", "invoiceNumber", "items", "subTotal", "taxTotal", "grandTotal", "paymentMode", "cashierId", "cashierName", "createdAt", "status"]
+    },
+    "POSCustomer": {
+      "title": "POSCustomer",
+      "description": "Retail customer database with loyalty points and store credit",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "phone": { "type": "string" },
+        "email": { "type": "string" },
+        "address": { "type": "string" },
+        "gstin": { "type": "string" },
+        "loyaltyPoints": { "type": "number" },
+        "walletBalance": { "type": "number" },
+        "createdDate": { "type": "string" }
+      },
+      "required": ["id", "name", "phone", "loyaltyPoints", "walletBalance", "createdDate"]
+    },
+    "Employee": {
+      "title": "Employee",
+      "description": "Cashier, manager and store admin staff credentials",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "phone": { "type": "string" },
+        "role": { "type": "string" },
+        "pinCode": { "type": "string" },
+        "status": { "type": "string" },
+        "createdDate": { "type": "string" }
+      },
+      "required": ["id", "name", "email", "phone", "role", "pinCode", "status", "createdDate"]
+    },
+    "AttendanceRecord": {
+      "title": "AttendanceRecord",
+      "description": "Clock-in and clock-out logs for retail staff",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "employeeId": { "type": "string" },
+        "employeeName": { "type": "string" },
+        "role": { "type": "string" },
+        "date": { "type": "string" },
+        "clockIn": { "type": "string" },
+        "clockOut": { "type": "string" },
+        "status": { "type": "string" }
+      },
+      "required": ["id", "employeeId", "employeeName", "role", "date", "clockIn", "status"]
+    },
+    "ActivityLog": {
+      "title": "ActivityLog",
+      "description": "System audits and operations log",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "employeeId": { "type": "string" },
+        "employeeName": { "type": "string" },
+        "action": { "type": "string" },
+        "details": { "type": "string" },
+        "timestamp": { "type": "string" }
+      },
+      "required": ["id", "employeeId", "employeeName", "action", "details", "timestamp"]
+    },
+    "ExpenseRecord": {
+      "title": "ExpenseRecord",
+      "description": "Retail shop operational expenses",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "category": { "type": "string" },
+        "amount": { "type": "number" },
+        "description": { "type": "string" },
+        "date": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "category", "amount", "description", "date", "createdAt"]
     }
   },
   "firestore": {
@@ -114,6 +256,38 @@
     "/settings/{settingId}": {
       "schema": "DeliverySettings",
       "description": "Store logistics and app configurations"
+    },
+    "/suppliers/{supplierId}": {
+      "schema": "Supplier",
+      "description": "Garment manufacturers and suppliers"
+    },
+    "/purchases/{purchaseId}": {
+      "schema": "PurchaseRecord",
+      "description": "Stock inventory purchase ledger"
+    },
+    "/pos_sales/{saleId}": {
+      "schema": "POSSale",
+      "description": "In-store cashier offline bills with Indian GST breakdown"
+    },
+    "/pos_customers/{customerId}": {
+      "schema": "POSCustomer",
+      "description": "Retail shop customers loyalty card profile"
+    },
+    "/employees/{employeeId}": {
+      "schema": "Employee",
+      "description": "Role-based authorization and permissions"
+    },
+    "/attendance/{attendanceId}": {
+      "schema": "AttendanceRecord",
+      "description": "Daily employee attendance card"
+    },
+    "/activity_logs/{logId}": {
+      "schema": "ActivityLog",
+      "description": "Security logs and system updates"
+    },
+    "/expenses/{expenseId}": {
+      "schema": "ExpenseRecord",
+      "description": "Shop operational expenses ledger"
     }
   }
 }

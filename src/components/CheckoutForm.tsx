@@ -52,8 +52,6 @@ export default function CheckoutForm({
   const [loading, setLoading] = useState(false);
   const [formError, setFormError] = useState('');
 
-  if (!isOpen) return null;
-
   // Active delivery config (either passed as prop or falling back to safe local defaults)
   const config = deliverySettings || {
     expressEnabled: true,
@@ -72,7 +70,9 @@ export default function CheckoutForm({
     if (!isExpressEligible && deliveryMode === 'EXPRESS') {
       setDeliveryMode('NORMAL');
     }
-  }, [isExpressEligible]);
+  }, [isExpressEligible, deliveryMode]);
+
+  if (!isOpen) return null;
 
   const subtotal = cartItems.reduce((acc, item) => acc + item.product.offerPrice * item.quantity, 0);
   
@@ -97,9 +97,9 @@ export default function CheckoutForm({
   // Generate unique order reference number
   const orderNumber = `RN-${Math.floor(100000 + Math.random() * 900000)}`;
 
-  // Dynamic UPI Link & QR Code
+  // Fixed Merchant UPI Link & QR Code
   const ownerUpiId = "9994780828@okaxis"; // derived from phone
-  const upiPayLink = `upi://pay?pa=${ownerUpiId}&pn=Rightnow%20Garments&am=${totalAmount}&cu=INR&tn=Order%20${orderNumber}`;
+  const upiPayLink = `upi://pay?pa=${ownerUpiId}&pn=Rightnow%20Garments`;
   const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(upiPayLink)}`;
 
   // File Upload Handler (Base64 converter)
@@ -210,7 +210,7 @@ export default function CheckoutForm({
             Back to Cart
           </button>
           <span className="text-sm font-black uppercase text-neutral-900 dark:text-white tracking-wider">
-            Order Reference: <span className="text-orange-500">{orderNumber}</span>
+            Secure Checkout Portal
           </span>
           <button 
             onClick={onClose}
@@ -465,7 +465,7 @@ export default function CheckoutForm({
               </div>
 
               <p className="text-[11px] text-neutral-400 leading-relaxed">
-                Scan this dynamic QR code with any UPI app (GPay, PhonePe, Paytm, BHIM) to complete your payment of <strong className="text-orange-500 text-xs">₹{totalAmount.toLocaleString('en-IN')}</strong> directly to the owner.
+                Scan this fixed merchant QR code with any UPI app (GPay, PhonePe, Paytm, BHIM) to complete your payment of <strong className="text-orange-500 text-xs">₹{totalAmount.toLocaleString('en-IN')}</strong> directly to the owner.
               </p>
 
               {/* QR Image Center */}

@@ -444,21 +444,13 @@ export default function ProductDetailModal({
                   </button>
                   <div className="flex gap-2">
                     <button
-                      id="pdp-wishlist-toggle"
-                      onClick={() => onToggleWishlist(product)}
-                      className="flex-1 border border-neutral-200 dark:border-neutral-800 hover:border-neutral-400 dark:hover:border-neutral-600 p-3 rounded-xl flex items-center justify-center gap-1.5 transition-all text-xs font-bold text-neutral-700 dark:text-neutral-300"
-                    >
-                      <Heart className={`w-4 h-4 ${isWishlisted ? 'fill-red-500 text-red-500' : ''}`} />
-                      {isWishlisted ? 'Wishlisted' : 'Save To Wish'}
-                    </button>
-                    <button
                       id="pdp-share-btn"
                       onClick={handleShare}
-                      className="border border-neutral-200 dark:border-neutral-800 hover:border-neutral-400 dark:hover:border-neutral-600 p-3 rounded-xl flex items-center justify-center transition-all text-neutral-700 dark:text-neutral-300 font-bold text-xs"
+                      className="flex-1 border border-neutral-200 dark:border-neutral-800 hover:border-neutral-400 dark:hover:border-neutral-600 p-3 rounded-xl flex items-center justify-center transition-all text-neutral-700 dark:text-neutral-300 font-bold text-xs"
                       title="Copy sharing link"
                     >
-                      <Share2 className="w-4 h-4 mr-1" />
-                      {copied ? 'Copied' : 'Share'}
+                      <Share2 className="w-4 h-4 mr-1.5" />
+                      {copied ? 'Copied Link' : 'Share Product'}
                     </button>
                   </div>
                 </div>

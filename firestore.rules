@@ -41,5 +41,45 @@ service cloud.firestore {
       // Anyone can write settings to update or seed them.
       allow read, write: if true;
     }
+
+    // Suppliers Collection
+    match /suppliers/{supplierId} {
+      allow read, write: if true;
+    }
+
+    // Purchases Collection
+    match /purchases/{purchaseId} {
+      allow read, write: if true;
+    }
+
+    // POS Sales Collection
+    match /pos_sales/{saleId} {
+      allow read, write: if true;
+    }
+
+    // POS Customers Collection
+    match /pos_customers/{customerId} {
+      allow read, write: if true;
+    }
+
+    // Employees Collection
+    match /employees/{employeeId} {
+      allow read, write: if true;
+    }
+
+    // Attendance Collection
+    match /attendance/{attendanceId} {
+      allow read, write: if true;
+    }
+
+    // Activity Logs Collection
+    match /activity_logs/{logId} {
+      allow read, write: if true;
+    }
+
+    // Expenses Collection
+    match /expenses/{expenseId} {
+      allow read, write: if true;
+    }
   }
 }
